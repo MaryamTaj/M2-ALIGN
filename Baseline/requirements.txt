@@ -1,0 +1,7 @@
+datasets
+pandas
+pyarrow
+accelerate
+huggingface_hub
+git+https://github.com/huggingface/transformers
+tqdm
