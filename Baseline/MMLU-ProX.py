@@ -4,11 +4,15 @@ from datasets import load_dataset
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
+# ---- Device selection (Compute Canada) ----
 assert torch.cuda.is_available(), "CUDA not available – did you request a GPU?"
 device = torch.device("cuda")
+
+# A100 supports bfloat16; V100/T4 use float16
 cap_major = torch.cuda.get_device_capability(0)[0]
 dtype = torch.bfloat16 if cap_major >= 8 else torch.float16
 
+# ---- Load model efficiently ----
 model = Qwen3VLForConditionalGeneration.from_pretrained(
     MODEL_ID,
     torch_dtype=dtype,
@@ -52,10 +56,10 @@ def generate_text_response(user_text: str, max_new_tokens: int = 8) -> str:
         clean_up_tokenization_spaces=False,
     )[0].strip()
 
+# ---- Smoke test ----
 print(
     generate_text_response(
         "Answer with just one letter: A, B, C, or D. What is 2+2? "
         "A)3 B)4 C)5 D)6"
     )
 )
-
