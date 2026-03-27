@@ -1,40 +1,67 @@
 #!/bin/bash
-#SBATCH --job-name=MMLU_ProX        # Job name
-#SBATCH --account=def-annielee         # Replace with your allocation
-#SBATCH --nodes=1                       # Number of nodes
-#SBATCH --ntasks-per-node=1             # Number of tasks per node
-#SBATCH --cpus-per-task=8               # CPU cores per task
-#SBATCH --mem=64G                       # Memory per node
-#SBATCH --time=02:00:00                 # Max run time (HH:MM:SS)
-#SBATCH --gres=gpu:1                     # Request 1 GPU
-#SBATCH --mail-type=END,FAIL            # Email notifications
-#SBATCH --mail-user=tajm@mail.utoronto.ca     # Replace with your email
-#SBATCH --output=mmlu_prox_%j.log        # Standard output log
+#SBATCH --job-name=MMLU_ProX
+#SBATCH --account=def-annielee
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --gres=gpu:1
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=maryam.taj@mail.utoronto.ca
+#SBATCH --output=mmlu_prox_%j.log
 
-# ----------------------------------------
-# Load environment modules
-# ----------------------------------------
+set -euo pipefail
+
+echo "=== Job info ==="
+date
+hostname
+echo "SLURM_JOB_ID=${SLURM_JOB_ID}"
+nvidia-smi || true
+echo
+
+# ---------------------------
+# Load modules
+# ---------------------------
 module --force purge
 module load StdEnv/2023
 module load python/3.10
 module load cudacore/.12.2.2
 module load arrow/18.1.0
 
-# ----------------------------------------
-# Activate virtual environment
-# ----------------------------------------
-source ~/projects/def-annielee/tajm/M2-ALIGN/.venv/bin/activate
+# ---------------------------
+# Activate SCRATCH virtualenv
+# ---------------------------
+source $SCRATCH/venvs/m2-align/bin/activate
 
-# Upgrade pip and install dependencies (if needed)
-pip install --upgrade pip
-pip install --no-deps -r ~/projects/def-annielee/tajm/M2-ALIGN/Baseline/requirements.txt
 
-# ----------------------------------------
-# Set Hugging Face token
-# ----------------------------------------
+echo "=== Python env ==="
+which python
+python -V
+python -m pip -V
+echo
+
+echo "=== Import sanity checks ==="
+python -c "import datasets, transformers, huggingface_hub, fsspec, dill, httpx; print('imports ok')"
+python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+echo
+
+# ---------------------------
+# Hugging Face cache on SCRATCH
+# ---------------------------
+export HF_HOME=$SCRATCH/huggingface
+export HF_DATASETS_CACHE=$SCRATCH/huggingface/datasets
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
+
+# ---------------------------
+# Hugging Face token
+# ---------------------------
 source ~/projects/def-annielee/tajm/M2-ALIGN/.tokens
 
-# ----------------------------------------
-# Run baseline script
-# ----------------------------------------
-python ~/projects/def-annielee/tajm/M2-ALIGN/Baseline/mmlu_prox.py
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+# ---------------------------
+# Run script
+# ---------------------------
+python -u ~/projects/def-annielee/tajm/M2-ALIGN/Baseline/mmlu_prox.py
