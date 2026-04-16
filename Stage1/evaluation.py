@@ -1,7 +1,7 @@
 
-from mindmerger_tools.input_features import *
+from tools.input_features import *
 from tqdm import tqdm
-from mindmerger_tools.utils import extract_last_num
+from tools.utils import extract_last_num
 import math
 import torch
 

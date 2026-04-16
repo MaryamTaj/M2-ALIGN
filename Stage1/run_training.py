@@ -62,11 +62,11 @@ def main(args):
         else:
             train_set = read_xnli_train()
 
-    dev_set = train_set[:args.dev_size]
-    train_set = train_set[args.dev_size:]
+    val_set = train_set[:args.val_size]
+    train_set = train_set[args.val_size:]
 
     train_set = MathDataset(train_set, task)
-    dev_set = MathDataset(dev_set, task)
+    val_set = MathDataset(val_set, task)
     lr = args.lr
     epoch_num = args.epoch_num
 
@@ -83,8 +83,13 @@ def main(args):
 
     os.makedirs(output_model_path_base, exist_ok=True)
     os.makedirs(result_path_base, exist_ok=True)
-    tokenizer_m2m = AutoTokenizer.from_pretrained(mt_path)
-    tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=True)
+    tokenizer_m2m = AutoTokenizer.from_pretrained(mt_path, use_fast=False)
+    try:
+        tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=True)
+    except (ValueError, ImportError) as e:
+        print(f"Falling back to slow LLM tokenizer for {llm_path}: {e}")
+        tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=False)
+
     tokenizer_llm.pad_token = tokenizer_llm.eos_token
     tokenizer_llm.padding_side = "left"
     # tokenizer_llm.pad_token = "[PAD]"
@@ -96,7 +101,7 @@ def main(args):
         'epoch_num': epoch_num,
         'gradient_accumulation': gradient_accumulation,
         'train_set:': len(train_set),
-        'dev_set:': len(dev_set),
+        'val_set:': len(val_set),
         'max_seq_len': max_seq_len,
         'max_gen_len': max_gen_len,
         'train_batch_size': train_batch_size,
@@ -144,24 +149,24 @@ def main(args):
         training_data=None)
 
     train_sampler = DistributedSampler(train_set)
-    dev_sampler = SequentialSampler(dev_set)
+    val_sampler = SequentialSampler(val_set)
 
     train_set = torch.utils.data.DataLoader(
         dataset=train_set,
         batch_size=train_micro_batch_size_per_gpu,
         sampler=train_sampler,
     )
-    dev_set = torch.utils.data.DataLoader(
-        dataset=dev_set,
+    val_set = torch.utils.data.DataLoader(
+        dataset=val_set,
         batch_size=eval_batch_size,
         shuffle=False,
-        sampler=dev_sampler,
+        sampler=val_sampler,
         num_workers=1,
         drop_last=False)
 
     global_rank = torch.distributed.get_rank()
     # best_perplexity = 1000000000
-    best_perplexity = evaluate_ppl(model, dev_set, tokenizer_llm, tokenizer_m2m,
+    best_perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
                                    max_seq_len, max_gen_len, langs_map, augmentation)
     if use_wandb:
         wandb.log({'eval/perplexity': best_perplexity, 'train/global_step': 0})
@@ -214,7 +219,7 @@ def main(args):
                 })
 
             if step_count % eval_step == 0 and step_count > 0:
-                perplexity = evaluate_ppl(model, dev_set, tokenizer_llm, tokenizer_m2m,
+                perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
                                           max_seq_len, max_gen_len, langs_map, augmentation)
                 print('ppl:', perplexity)
                 if use_wandb:
@@ -227,7 +232,7 @@ def main(args):
 
 
 
-        perplexity = evaluate_ppl(model, dev_set, tokenizer_llm, tokenizer_m2m,
+        perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
                                   max_seq_len, max_gen_len, langs_map, augmentation)
         print('ppl:', perplexity)
         if use_wandb:
@@ -308,7 +313,7 @@ if __name__ == "__main__":
         default=512
     )
     parser.add_argument(
-        "--dev_size",
+        "--val_size",
         type=int,
         default=3000
     )

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=MMLU_ProX
+#SBATCH --job-name=baseline_eval
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,9 +9,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=mmlu_prox_%j.log
+#SBATCH --output=baseline_eval_%j.log
 
 set -euo pipefail
+
+MODEL_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 
 echo "=== Job info ==="
 date
@@ -25,14 +28,14 @@ echo
 # ---------------------------
 module --force purge
 module load StdEnv/2023
-module load python/3.10
+module load python/3.11.5
 module load cudacore/.12.2.2
 module load arrow/18.1.0
 
 # ---------------------------
 # Activate SCRATCH virtualenv
 # ---------------------------
-source $SCRATCH/venvs/m2-align/bin/activate
+source "$SCRATCH/venvs/m2-align/bin/activate"
 
 
 echo "=== Python env ==="
@@ -51,17 +54,47 @@ echo
 # ---------------------------
 export HF_HOME=$SCRATCH/huggingface
 export HF_DATASETS_CACHE=$SCRATCH/huggingface/datasets
+export TRANSFORMERS_CACHE=$HF_HOME/transformers
 mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
 
 # ---------------------------
 # Hugging Face token
 # ---------------------------
-source ~/projects/def-annielee/tajm/M2-ALIGN/.tokens
+if [ -f "$PROJECT_ROOT/.tokens" ]; then
+  # shellcheck disable=SC1090
+  source "$PROJECT_ROOT/.tokens"
+  echo "Loaded .tokens file"
+else
+  echo "WARNING: .tokens file not found"
+fi
 
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
 # ---------------------------
+# Offline preflight checks
+# ---------------------------
+if [ ! -d "$MODEL_PATH" ]; then
+  echo "ERROR: Model snapshot not found: $MODEL_PATH"
+  echo "Please cache Qwen3-VL under \$SCRATCH/huggingface first."
+  exit 1
+fi
+
+echo "=== Check cached MMLU-ProX for sw/wo/yo ==="
+python - <<'PY'
+from datasets import load_dataset
+langs = ["sw", "wo", "yo"]
+for lang in langs:
+    _ = load_dataset("li-lab/MMLU-ProX", lang, split="validation", download_mode="reuse_dataset_if_exists")
+    _ = load_dataset("li-lab/MMLU-ProX", lang, split="test", download_mode="reuse_dataset_if_exists")
+print("Cached dataset check passed for sw/wo/yo.")
+PY
+
+# ---------------------------
 # Run script
 # ---------------------------
-python -u ~/projects/def-annielee/tajm/M2-ALIGN/Baseline/mmlu_prox.py
+python -u "$PROJECT_ROOT/Baseline/mmlu_prox.py" \
+  --model-id "$MODEL_PATH" \
+  --langs sw wo yo \
+  --local-files-only
+

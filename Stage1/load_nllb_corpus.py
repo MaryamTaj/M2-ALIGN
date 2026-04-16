@@ -25,7 +25,7 @@ def main():
     for source_lang in langs:
         source_code = LANG_TO_NLLB[source_lang]
         target_code = LANG_TO_NLLB["English"]
-        config_name = f"{source_code}-{target_code}"
+        config_name = f"{target_code}-{source_code}"
         ds = load_dataset("allenai/nllb", config_name, split=args.split)
         out_path = os.path.join(args.output_dir, f"{source_lang}_to_English.jsonl")
         kept = 0
