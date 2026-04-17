@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=5:00:00
+#SBATCH --time=8:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -15,7 +15,7 @@ set -euo pipefail
 
 # Local model snapshots on SCRATCH (offline compute nodes).
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-MT_PATH="$SCRATCH/huggingface/hub/models--facebook--nllb-200-distilled-600M/snapshots"
+MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -97,5 +97,6 @@ deepspeed --master_port 50002 run_training.py --deepspeed \
   --max_gen_len 256 \
   --eval_batch_size 2 \
   --use_wandb True \
+  --wandb_mode offline \
   --wandb_project m2-align \
   --wandb_run_name stage1
