@@ -30,10 +30,10 @@ def get_train_ds_config(train_batch_size=1,
         "train_micro_batch_size_per_gpu": train_micro_batch_size_per_gpu,
         "steps_per_print": 2000,
         "zero_optimization": zero_opt_dict,
+        # DeepSpeed bf16 config accepts only bf16-specific fields.
+        # loss scaling keys are fp16-only and fail validation on recent versions.
         "bf16": {
             "enabled": True,
-            "loss_scale_window": 50,
-            "min_loss_scale": 1e-10,
         },
         "gradient_clipping": 1.0,
         "gradient_accumulation_steps": gradient_accumulation_steps,
