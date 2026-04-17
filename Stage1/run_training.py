@@ -1,7 +1,7 @@
 #coding=utf-8
 import torch.fx
 from tqdm import tqdm
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, NllbTokenizer
 import torch
 from tools.utils import save_model, set_seed
 from tools.read_datasets import *
@@ -21,6 +21,112 @@ try:
     import wandb
 except ImportError:
     wandb = None
+
+
+def _load_wandb_key_from_tokens():
+    """Best-effort loader for WANDB_API_KEY from local .tokens files."""
+    for candidate in (
+        os.path.join(os.getcwd(), ".tokens"),
+        os.path.join(os.path.dirname(os.getcwd()), ".tokens"),
+    ):
+        if not os.path.isfile(candidate):
+            continue
+        with open(candidate, "r", encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() != "WANDB_API_KEY":
+                    continue
+                value = value.strip().strip('"').strip("'")
+                if value:
+                    os.environ["WANDB_API_KEY"] = value
+                    return True
+    return False
+
+
+def _init_wandb_or_disable(args, config):
+    """Initialize wandb with online/offline fallback; never crash training."""
+    if wandb is None:
+        return False
+
+    requested_mode = (args.wandb_mode or "auto").lower()
+    if requested_mode not in {"auto", "online", "offline"}:
+        print(f"Invalid wandb_mode={args.wandb_mode}; expected auto|online|offline. Disabling W&B.")
+        return False
+
+    if requested_mode in {"auto", "online"} and not os.environ.get("WANDB_API_KEY"):
+        _load_wandb_key_from_tokens()
+
+    if requested_mode == "offline":
+        os.environ["WANDB_MODE"] = "offline"
+        try:
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_run_name,
+                config=config,
+                settings=wandb.Settings(init_timeout=args.wandb_init_timeout),
+            )
+            print("Initialized Weights & Biases in offline mode.")
+            return True
+        except Exception as exc:
+            print(f"wandb offline init failed ({exc}); disabling Weights & Biases logging.")
+            return False
+
+    if not os.environ.get("WANDB_API_KEY"):
+        if requested_mode == "online":
+            print("WANDB_API_KEY not found; disabling Weights & Biases logging.")
+            return False
+        # auto mode: no key, still allow local run files via offline mode.
+        os.environ["WANDB_MODE"] = "offline"
+        try:
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_run_name,
+                config=config,
+                settings=wandb.Settings(init_timeout=args.wandb_init_timeout),
+            )
+            print("WANDB_API_KEY not found; initialized W&B in offline mode.")
+            return True
+        except Exception as exc:
+            print(f"wandb offline init failed ({exc}); disabling Weights & Biases logging.")
+            return False
+
+    try:
+        wandb.login(key=os.environ["WANDB_API_KEY"], relogin=False)
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            config=config,
+            settings=wandb.Settings(init_timeout=args.wandb_init_timeout),
+        )
+        return True
+    except Exception as exc:
+        if requested_mode == "online":
+            print(f"wandb online init failed ({exc}); disabling Weights & Biases logging.")
+            return False
+        # auto mode: fall back to offline so runs can be synced later.
+        try:
+            os.environ["WANDB_MODE"] = "offline"
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_run_name,
+                config=config,
+                settings=wandb.Settings(init_timeout=args.wandb_init_timeout),
+            )
+            print(f"wandb online init failed ({exc}); fell back to offline mode.")
+            return True
+        except Exception as offline_exc:
+            print(
+                f"wandb init failed ({exc}); offline fallback failed ({offline_exc}); "
+                "disabling Weights & Biases logging."
+            )
+            return False
 
 
 def main(args):
@@ -83,7 +189,13 @@ def main(args):
 
     os.makedirs(output_model_path_base, exist_ok=True)
     os.makedirs(result_path_base, exist_ok=True)
-    tokenizer_m2m = AutoTokenizer.from_pretrained(mt_path, use_fast=False)
+
+    # For NLLB models, explicitly use the slow NllbTokenizer to avoid
+    # attempting to instantiate a fast backend (which may require extra deps).
+    if "nllb-200" in mt_path or "nllb" in mt_path:
+        tokenizer_m2m = NllbTokenizer.from_pretrained(mt_path)
+    else:
+        tokenizer_m2m = AutoTokenizer.from_pretrained(mt_path, use_fast=False)
     try:
         tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=True)
     except (ValueError, ImportError) as e:
@@ -110,24 +222,20 @@ def main(args):
         'languages': languages,
     }, indent=2))
 
-    use_wandb = args.use_wandb and wandb is not None and args.local_rank == 0
+    use_wandb = args.use_wandb and args.local_rank == 0
     if use_wandb:
-        wandb.init(
-            project=args.wandb_project,
-            name=args.wandb_run_name,
-            config={
-                'llm_path': llm_path,
-                'mt_path': mt_path,
-                'stage_name': stage_name,
-                'task': task,
-                'train_num_per_language': train_num,
-                'train_batch_size': train_batch_size,
-                'lr': lr,
-                'max_seq_len': max_seq_len,
-                'max_gen_len': max_gen_len,
-                'languages': languages,
-            }
-        )
+        use_wandb = _init_wandb_or_disable(args, {
+            'llm_path': llm_path,
+            'mt_path': mt_path,
+            'stage_name': stage_name,
+            'task': task,
+            'train_num_per_language': train_num,
+            'train_batch_size': train_batch_size,
+            'lr': lr,
+            'max_seq_len': max_seq_len,
+            'max_gen_len': max_gen_len,
+            'languages': languages,
+        })
 
     if stage_name != 'mapping' and args.init_checkpoint is None:
         args.init_checkpoint = f'./outputs/{save_name}/{task}/mapping/pytorch_model.bin'
@@ -356,6 +464,16 @@ if __name__ == "__main__":
         "--wandb_run_name",
         type=str,
         default=''
+    )
+    parser.add_argument(
+        "--wandb_mode",
+        type=str,
+        default='auto'
+    )
+    parser.add_argument(
+        "--wandb_init_timeout",
+        type=int,
+        default=90
     )
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
