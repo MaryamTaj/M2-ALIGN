@@ -1,5 +1,5 @@
 
-from transformers import AutoModelForCausalLM, AutoModel, AutoConfig
+from transformers import AutoModel, M2M100Model
 from transformers import Qwen3VLForConditionalGeneration
 import torch
 from torch import nn
@@ -36,7 +36,14 @@ class MindMerger(nn.Module):
         super(MindMerger, self).__init__()
         self.max_gen_len = max_gen_len
 
-        model_mt = AutoModel.from_pretrained(mt_path)
+        # NLLB checkpoints use the M2M100 architecture. If `config.json` is missing
+        # `model_type`, `AutoModel.from_pretrained` fails; loading `M2M100Model` directly
+        # uses `M2M100Config` and avoids AutoConfig dispatch.
+        mt_path_lower = (mt_path or "").lower()
+        if "nllb" in mt_path_lower or "m2m_100" in mt_path_lower:
+            model_mt = M2M100Model.from_pretrained(mt_path)
+        else:
+            model_mt = AutoModel.from_pretrained(mt_path)
         print('MT model size:', sum(param.numel() for param in model_mt.parameters()) / 1000000)
         self.model_mt = model_mt
         for name, parameter in self.model_mt.named_parameters():
@@ -69,7 +76,13 @@ class MindMerger(nn.Module):
 
         self.mapping = Mapping(d_model, llm_dim)
         self.llm_pad_token_id = llm_pad_token_id
-        self.llm_bos_token_id = llm_bos_token_id
+        # Some tokenizers (including Qwen variants) may not define a BOS token.
+        # Fall back to pad token so we can still build the prefix embedding.
+        self.llm_bos_token_id = llm_bos_token_id if llm_bos_token_id is not None else llm_pad_token_id
+        if self.llm_bos_token_id is None:
+            raise ValueError(
+                "Both llm_bos_token_id and llm_pad_token_id are None; cannot build BOS embedding."
+            )
         print('mapping layer size:', sum(param.numel() for param in self.mapping.parameters()) / 1000000)
 
     def squeeze_pad(self, hidden_states, masks):
@@ -99,14 +112,15 @@ class MindMerger(nn.Module):
 
     def forward(self, input_ids_mt, attention_mask_mt,
                 labels=None, mask_label=None, input_ids_prompt=None, mask_prompt=None):
+        device = input_ids_mt.device
         end_boundary = self.mapping.get_embed()
         bs = input_ids_mt.size(0)
         end_boundary = end_boundary.expand([bs, 1, end_boundary.size(-1)])
 
-        bos = torch.tensor([self.llm_bos_token_id for i in range(bs)], dtype=torch.long).cuda()
+        bos = torch.tensor([self.llm_bos_token_id for i in range(bs)], dtype=torch.long, device=device)
         bos_embedding = self.llm_embedding_layer(bos)
         bos_embedding = bos_embedding.view(bs, 1, -1)
-        mask = torch.ones([bs, 1], dtype=torch.long).cuda()
+        mask = torch.ones([bs, 1], dtype=torch.long, device=device)
         llm_input_embedding = bos_embedding
         llm_input_mask = mask
 

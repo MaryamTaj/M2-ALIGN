@@ -1,0 +1,23 @@
+2026-04-17 01:52:06,006 INFO    MainThread:1135064 [wandb_setup.py:_flush():81] Current SDK version is 0.24.0
+2026-04-17 01:52:06,006 INFO    MainThread:1135064 [wandb_setup.py:_flush():81] Configure stats pid to 1135064
+2026-04-17 01:52:06,006 INFO    MainThread:1135064 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2026-04-17 01:52:06,007 INFO    MainThread:1135064 [wandb_init.py:setup_run_log_directory():717] Logging user logs to /lustre06/project/6072380/tajm/M2-ALIGN/Stage1/wandb/offline-run-20260417_015205-3396upo2/logs/debug.log
+2026-04-17 01:52:06,007 INFO    MainThread:1135064 [wandb_init.py:setup_run_log_directory():718] Logging internal logs to /lustre06/project/6072380/tajm/M2-ALIGN/Stage1/wandb/offline-run-20260417_015205-3396upo2/logs/debug-internal.log
+2026-04-17 01:52:06,007 INFO    MainThread:1135064 [wandb_init.py:init():844] calling init triggers
+2026-04-17 01:52:06,007 INFO    MainThread:1135064 [wandb_init.py:init():849] wandb.init called with sweep_config: {}
+config: {'llm_path': '/scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b', 'mt_path': '/scratch/tajm/huggingface/nllb-200-distilled-600M-full', 'stage_name': 'mapping', 'task': 'translation', 'train_num_per_language': 3000, 'train_batch_size': 24, 'lr': 2e-05, 'max_seq_len': 256, 'max_gen_len': 256, 'languages': ['Swahili', 'Yoruba', 'Wolof'], '_wandb': {}}
+2026-04-17 01:52:06,007 INFO    MainThread:1135064 [wandb_init.py:init():892] starting backend
+2026-04-17 01:52:17,452 INFO    MainThread:1135064 [wandb_init.py:init():895] sending inform_init request
+2026-04-17 01:52:17,789 INFO    MainThread:1135064 [wandb_init.py:init():903] backend started and connected
+2026-04-17 01:52:17,791 INFO    MainThread:1135064 [wandb_init.py:init():973] updated telemetry
+2026-04-17 01:52:17,863 INFO    MainThread:1135064 [wandb_init.py:init():997] communicating run to backend with 90.0 second timeout
+2026-04-17 01:52:18,315 INFO    MainThread:1135064 [wandb_init.py:init():1044] starting run threads in backend
+2026-04-17 01:52:18,398 INFO    MainThread:1135064 [wandb_run.py:_console_start():2529] atexit reg
+2026-04-17 01:52:18,398 INFO    MainThread:1135064 [wandb_run.py:_redirect():2377] redirect: wrap_raw
+2026-04-17 01:52:18,398 INFO    MainThread:1135064 [wandb_run.py:_redirect():2446] Wrapping output streams.
+2026-04-17 01:52:18,398 INFO    MainThread:1135064 [wandb_run.py:_redirect():2469] Redirects installed.
+2026-04-17 01:52:18,712 INFO    MainThread:1135064 [wandb_init.py:init():1084] run started, returning control to user process
+2026-04-17 02:43:45,191 INFO    MainThread:1135064 [wandb_run.py:_finish():2295] finishing run m2-align/3396upo2
+2026-04-17 02:43:45,208 INFO    MainThread:1135064 [wandb_run.py:_atexit_cleanup():2494] got exitcode: 0
+2026-04-17 02:43:45,208 INFO    MainThread:1135064 [wandb_run.py:_restore():2476] restore
+2026-04-17 02:43:45,208 INFO    MainThread:1135064 [wandb_run.py:_restore():2482] restore done
