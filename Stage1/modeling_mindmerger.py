@@ -32,7 +32,7 @@ class Mapping(nn.Module):
 
 class MindMerger(nn.Module):
     def __init__(self, mt_path, llm_path, max_gen_len, llm_bos_token_id,
-                 llm_pad_token_id):
+                 llm_pad_token_id, local_files_only: bool = False):
         super(MindMerger, self).__init__()
         self.max_gen_len = max_gen_len
 
@@ -41,9 +41,13 @@ class MindMerger(nn.Module):
         # uses `M2M100Config` and avoids AutoConfig dispatch.
         mt_path_lower = (mt_path or "").lower()
         if "nllb" in mt_path_lower or "m2m_100" in mt_path_lower:
-            model_mt = M2M100Model.from_pretrained(mt_path)
+            model_mt = M2M100Model.from_pretrained(
+                mt_path, local_files_only=local_files_only
+            )
         else:
-            model_mt = AutoModel.from_pretrained(mt_path)
+            model_mt = AutoModel.from_pretrained(
+                mt_path, local_files_only=local_files_only
+            )
         print('MT model size:', sum(param.numel() for param in model_mt.parameters()) / 1000000)
         self.model_mt = model_mt
         for name, parameter in self.model_mt.named_parameters():
@@ -55,7 +59,9 @@ class MindMerger(nn.Module):
         print('used size:', sum(param.numel() for param in self.encoder_mt.parameters()) / 1000000)
         # Qwen3-VL uses a different Transformers model class than a causal-LM.
         # We keep the existing AutoModelForCausalLM path for all other LLMs.
-        model_llm = Qwen3VLForConditionalGeneration.from_pretrained(llm_path)
+        model_llm = Qwen3VLForConditionalGeneration.from_pretrained(
+            llm_path, local_files_only=local_files_only
+        )
 
         self.model_llm = model_llm
         self.llm_embedding_layer = self.model_llm.get_input_embeddings()

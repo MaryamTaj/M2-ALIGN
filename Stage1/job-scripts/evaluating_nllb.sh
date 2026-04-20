@@ -16,11 +16,10 @@ set -euo pipefail
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 STAGE1="$PROJECT_ROOT/Stage1"
 
-# Match training_nllb.sh: same Qwen snapshot, NLLB layout, and mapping output from run_training.py
-# (nllb_corpus + default --save_name MindMerger -> ./outputs/MindMerger/translation/mapping/)
+# Match training_nllb.sh: same Qwen snapshot and NLLB layout.
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-MAPPING_CKPT="$STAGE1/outputs/MindMerger/translation/mapping/pytorch_model.bin"
+MAPPING_CKPT="$STAGE1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -77,8 +76,16 @@ if [ ! -d "$MT_PATH" ]; then
   exit 1
 fi
 if [ ! -f "$MAPPING_CKPT" ]; then
-  echo "ERROR: Mapping checkpoint not found: $MAPPING_CKPT"
-  exit 1
+  # Fallback for runs that saved under translation/ instead of nllb_corpus/
+  ALT_MAPPING_CKPT="$STAGE1/outputs/MindMerger/translation/mapping/pytorch_model.bin"
+  if [ -f "$ALT_MAPPING_CKPT" ]; then
+    MAPPING_CKPT="$ALT_MAPPING_CKPT"
+    echo "Using fallback mapping checkpoint: $MAPPING_CKPT"
+  else
+    echo "ERROR: Mapping checkpoint not found: $MAPPING_CKPT"
+    echo "Also checked fallback: $ALT_MAPPING_CKPT"
+    exit 1
+  fi
 fi
 
 echo "=== Cached MMLU-ProX check (sw, wo, yo) ==="
