@@ -3,7 +3,7 @@ import random
 import torch
 
 import argparse
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen3VLForConditionalGeneration, AutoTokenizer
 from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
 from datasets import load_dataset
 from tqdm import tqdm
@@ -51,10 +51,9 @@ def load_model(model_id: str, local_files_only: bool):
         low_cpu_mem_usage=True,
         local_files_only=local_files_only,
     )
-    processor = AutoProcessor.from_pretrained(model_id, local_files_only=local_files_only)
-    tokenizer = processor.tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=local_files_only)
     model.eval()
-    return model, processor, tokenizer, device
+    return model, tokenizer, device
 
 # ---------------------------
 # Presence penalty (HF compatible)
@@ -134,10 +133,10 @@ def build_fewshot_prompt(lang: str, demo_samples: list, test_sample: dict) -> st
     return "\n\n".join(blocks), letters  # return letters for allowed choices
 
 @torch.inference_mode()
-def pick_choice(prompt: str, choices: list[str], *, model, processor, tokenizer, device) -> str:
+def pick_choice(prompt: str, choices: list[str], *, model, tokenizer, device) -> str:
     # Put the whole prompt inside a single user message, as you already do
     messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
-    enc = processor.apply_chat_template(
+    enc = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
@@ -162,7 +161,7 @@ def pick_choice(prompt: str, choices: list[str], *, model, processor, tokenizer,
     )
 
     gen_only = generated_ids[:, enc["input_ids"].shape[1]:]
-    out_text = processor.batch_decode(
+    out_text = tokenizer.batch_decode(
         gen_only,
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
@@ -192,7 +191,7 @@ def evaluate(
 
     rng = random.Random(FEWSHOT_SEED)
 
-    model, processor, tokenizer, device = load_model(model_id, local_files_only=local_files_only)
+    model, tokenizer, device = load_model(model_id, local_files_only=local_files_only)
 
     for lang in langs:
         # test split (scored)
@@ -232,7 +231,6 @@ def evaluate(
                 prompt,
                 choices,
                 model=model,
-                processor=processor,
                 tokenizer=tokenizer,
                 device=device,
             )

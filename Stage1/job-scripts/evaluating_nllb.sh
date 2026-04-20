@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=5:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -16,9 +16,11 @@ set -euo pipefail
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 STAGE1="$PROJECT_ROOT/Stage1"
 
+# Match training_nllb.sh: same Qwen snapshot, NLLB layout, and mapping output from run_training.py
+# (nllb_corpus + default --save_name MindMerger -> ./outputs/MindMerger/translation/mapping/)
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-MT_PATH="$SCRATCH/huggingface/hub/models--facebook--nllb-200-distilled-600M/snapshots"
-MAPPING_CKPT="$STAGE1/outputs/M2Align/translation/mapping/pytorch_model.bin"
+MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
+MAPPING_CKPT="$STAGE1/outputs/MindMerger/translation/mapping/pytorch_model.bin"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -90,7 +92,7 @@ PY
 
 echo "=== Run MindMerger MMLU-ProX eval ==="
 cd "$STAGE1"
-python -u evaluate_mmlu_prox_mindmerger.py \
+python -u run_evaluating.py \
   --llm-path "$LLM_PATH" \
   --mt-path "$MT_PATH" \
   --mapping-ckpt "$MAPPING_CKPT" \

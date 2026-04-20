@@ -1,0 +1,180 @@
+wandb_version: 1
+
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.5
+    cli_version: 0.24.0
+    framework: huggingface
+    huggingface_version: 5.5.0
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1776405137
+    t:
+      1:
+      - 1
+      - 11
+      - 49
+      - 71
+      2:
+      - 1
+      - 11
+      - 49
+      - 71
+      3:
+      - 2
+      - 4
+      - 13
+      - 16
+      - 42
+      4: 3.11.5
+      5: 0.24.0
+      6: 5.5.0
+      13: linux-x86_64
+    e:
+      ia1fvdrrddiqkv1o9l29dh4c4vp4zmom:
+        os: Linux-5.14.0-611.42.1.el9_7.x86_64-x86_64-AMD_EPYC_7543_32-Core_Processor-with-glibc2.37
+        python: CPython 3.11.5
+        started_at: '2026-04-17T05:52:05.994148Z'
+        args:
+        - --local_rank=0
+        - --deepspeed
+        - --llm_path
+        - /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+        - --mt_path
+        - /scratch/tajm/huggingface/nllb-200-distilled-600M-full
+        - --stage_name
+        - mapping
+        - --task
+        - nllb_corpus
+        - --augmentation
+        - 'False'
+        - --nllb_data_dir
+        - ./data/nllb
+        - --train_num
+        - '3000'
+        - --val_size
+        - '900'
+        - --train_batch_size
+        - '24'
+        - --train_micro_batch_size_per_gpu
+        - '1'
+        - --epoch_num
+        - '3'
+        - --max_seq_len
+        - '256'
+        - --max_gen_len
+        - '256'
+        - --eval_batch_size
+        - '2'
+        - --use_wandb
+        - 'True'
+        - --wandb_mode
+        - offline
+        - --wandb_project
+        - m2-align
+        - --wandb_run_name
+        - stage1
+        program: /lustre06/project/6072380/tajm/M2-ALIGN/Stage1/run_training.py
+        code_path: Stage1/run_training.py
+        code_path_local: run_training.py
+        git:
+          remote_url: https://github.com/MaryamTaj/M2-ALIGN.git
+          commit: 95165f275d8ef115d51fd0d80e3129f0bef16533
+        root: /lustre06/project/6072380/tajm/M2-ALIGN/Stage1
+        host: ng31305
+        executable: /scratch/tajm/venvs/m2-align/bin/python
+        cpu_count: 64
+        cpu_count_logical: 64
+        gpu_type: NVIDIA A100-SXM4-40GB
+        gpu_count: 1
+        disk:
+          /:
+            total: '17179869184'
+            used: '4865470464'
+        memory:
+          total: '1081780318208'
+        gpu_nvidia:
+        - name: NVIDIA A100-SXM4-40GB
+          memory_total: '42949672960'
+          cuda_cores: 6912
+          architecture: Ampere
+          uuid: GPU-e755f48f-d911-cc49-5791-a82f7f8a1d28
+        cuda_version: '12.8'
+        slurm:
+          procid: '0'
+          submit_dir: /lustre06/project/6072380/tajm/M2-ALIGN/Stage1/job-scripts
+          job_cpus_per_node: '8'
+          job_nodelist: ng31305
+          topology_addr_pattern: switch.switch.node
+          job_account: def-annielee_gpu
+          cpus_per_task: '8'
+          localid: '0'
+          tres_per_task: cpu=8
+          oom_kill_step: '0'
+          nodeid: '0'
+          cpus_on_node: '8'
+          job_user: tajm
+          restart_count: '0'
+          job_name: training_nllb
+          ntasks: '1'
+          conf: /etc/slurm/slurm.conf
+          job_uid: '3156057'
+          task_pid: '1127242'
+          job_qos: normal
+          nprocs: '1'
+          job_id: '59496182'
+          gtids: '0'
+          job_num_nodes: '1'
+          job_gpus: '0'
+          nnodes: '1'
+          mem_per_node: '65536'
+          prio_process: '0'
+          nodelist: ng31305
+          script_context: prolog_task
+          mpi_type: pmix
+          job_partition: gpubase_bygpu_b2
+          topology_addr: ihpc207u29.ihpc313u25.ng31305
+          job_end_time: '1776433059'
+          submit_host: narval2
+          cluster_name: narval
+          tmpdir: /localscratch/tajm.59496182.0
+          jobid: '59496182'
+          job_start_time: '1776404259'
+          job_gid: '3156057'
+          tasks_per_node: '1'
+          gpus_on_node: '1'
+        writer_id: ia1fvdrrddiqkv1o9l29dh4c4vp4zmom
+llm_path:
+  desc: null
+  value: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+mt_path:
+  desc: null
+  value: /scratch/tajm/huggingface/nllb-200-distilled-600M-full
+stage_name:
+  desc: null
+  value: mapping
+task:
+  desc: null
+  value: translation
+train_num_per_language:
+  desc: null
+  value: 3000
+train_batch_size:
+  desc: null
+  value: 24
+lr:
+  desc: null
+  value: 2.0e-05
+max_seq_len:
+  desc: null
+  value: 256
+max_gen_len:
+  desc: null
+  value: 256
+languages:
+  desc: null
+  value:
+  - Swahili
+  - Yoruba
+  - Wolof

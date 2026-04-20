@@ -15,7 +15,7 @@ import string
 import torch
 from datasets import load_dataset
 from tqdm import tqdm
-from transformers import AutoProcessor, AutoTokenizer
+from transformers import AutoTokenizer
 
 from modeling_mindmerger import MindMerger
 from tools.input_features import mt_input_features
@@ -138,8 +138,7 @@ def evaluate(
     cap_major = torch.cuda.get_device_capability(0)[0]
     amp_dtype = torch.bfloat16 if cap_major >= 8 else torch.float16
 
-    processor = AutoProcessor.from_pretrained(llm_path, local_files_only=local_files_only)
-    tokenizer_llm = processor.tokenizer
+    tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, local_files_only=local_files_only)
     if tokenizer_llm.pad_token is None:
         tokenizer_llm.pad_token = tokenizer_llm.eos_token
     tokenizer_llm.padding_side = "left"
