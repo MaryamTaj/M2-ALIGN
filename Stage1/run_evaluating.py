@@ -9,6 +9,7 @@ the LLM conditions on mapped encoder states + boundary (same path as Stage 1 inf
 from __future__ import annotations
 
 import argparse
+import inspect
 import random
 import string
 
@@ -145,19 +146,26 @@ def evaluate(
 
     tokenizer_mt = AutoTokenizer.from_pretrained(mt_path, local_files_only=local_files_only)
 
+    # Be backward compatible with older MindMerger definitions that do not yet
+    # accept `local_files_only`.
+    mm_sig = inspect.signature(MindMerger.__init__)
+    mm_kwargs = {}
+    if "local_files_only" in mm_sig.parameters:
+        mm_kwargs["local_files_only"] = local_files_only
     model = MindMerger(
         mt_path,
         llm_path,
         max_gen_len,
         tokenizer_llm.bos_token_id,
         tokenizer_llm.pad_token_id,
-        local_files_only=local_files_only,
+        **mm_kwargs,
     )
     ckpt = torch.load(mapping_ckpt, map_location="cpu")
     model.mapping.load_state_dict(ckpt["model_state_dict"], strict=False)
     print("Loaded mapping from:", mapping_ckpt)
 
     model.model_mt.to(device)
+    model.model_llm.to(device)
     model.mapping.to(device)
     model.eval()
 
