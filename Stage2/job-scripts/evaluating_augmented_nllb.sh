@@ -21,13 +21,12 @@ LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/
 MT_PATH="$SCRATCH/huggingface/nllb-200-3.3B-full"
 MAPPING_CKPT="$STAGE2/outputs/augmentation/mapping/pytorch_model.bin"
 
-if [ -d "$MT_PATH" ]; then
-  for d in "$MT_PATH"/*; do
-    if [ -d "$d" ]; then
-      MT_PATH="$d"
-      break
-    fi
-  done
+# Resolve HuggingFace cache repo directory to a concrete snapshot directory.
+if [ -d "$MT_PATH/snapshots" ]; then
+  SNAPSHOT_DIR="$(ls -d "$MT_PATH"/snapshots/* 2>/dev/null | head -n 1 || true)"
+  if [ -n "$SNAPSHOT_DIR" ]; then
+    MT_PATH="$SNAPSHOT_DIR"
+  fi
 fi
 
 echo "=== Job info ==="
