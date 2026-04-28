@@ -18,16 +18,17 @@ STAGE2="$PROJECT_ROOT/Stage2"
 
 INPUT_PATH="$STAGE2/data/task_specialization_en.jsonl"
 OUTPUT_PATH="$STAGE2/data/task_specialization_translated.jsonl"
-NLLB_MODEL="$SCRATCH/huggingface/nllb-200-3.3B-full"
+# You can override this before sbatch:
+#   sbatch --export=NLLB_MODEL=/path/to/local/nllb_snapshot ...
+NLLB_MODEL="${NLLB_MODEL:-$SCRATCH/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/manual}"
 TARGET_LANGS="sw,yo,wo"
 
-if [ -d "$NLLB_MODEL" ]; then
-  for d in "$NLLB_MODEL"/*; do
-    if [ -d "$d" ]; then
-      NLLB_MODEL="$d"
-      break
-    fi
-  done
+# Resolve to an actual model root directory (snapshot) in offline mode.
+if [ -d "$NLLB_MODEL/snapshots" ]; then
+  SNAPSHOT_DIR="$(ls -d "$NLLB_MODEL"/snapshots/* 2>/dev/null | head -n 1 || true)"
+  if [ -n "$SNAPSHOT_DIR" ]; then
+    NLLB_MODEL="$SNAPSHOT_DIR"
+  fi
 fi
 
 echo "=== Job info ==="
@@ -56,8 +57,12 @@ export HF_HOME="$SCRATCH/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
 mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE"
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
 echo "HF_HOME=$HF_HOME"
 echo "NLLB_MODEL=$NLLB_MODEL"
+echo "HF_HUB_OFFLINE=$HF_HUB_OFFLINE"
+echo "TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE"
 echo
 
 echo "=== Optional token loading (.tokens) ==="
@@ -72,6 +77,21 @@ echo
 
 if [ ! -f "$INPUT_PATH" ]; then
   echo "ERROR: Input file not found: $INPUT_PATH"
+  exit 1
+fi
+if [ ! -d "$NLLB_MODEL" ]; then
+  echo "ERROR: NLLB model directory not found: $NLLB_MODEL"
+  echo "Hint: pre-download facebook/nllb-200-3.3B to your HF cache, or export NLLB_MODEL to a valid local snapshot."
+  exit 1
+fi
+if [ ! -f "$NLLB_MODEL/tokenizer_config.json" ]; then
+  echo "ERROR: tokenizer_config.json missing in: $NLLB_MODEL"
+  echo "This path is not a valid model root/snapshot for from_pretrained()."
+  exit 1
+fi
+if [ ! -f "$NLLB_MODEL/config.json" ]; then
+  echo "ERROR: config.json missing in: $NLLB_MODEL"
+  echo "This path is not a valid model root/snapshot for from_pretrained()."
   exit 1
 fi
 
