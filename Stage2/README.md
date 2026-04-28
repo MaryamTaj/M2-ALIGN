@@ -60,7 +60,10 @@ python Stage2/run_augmentation.py \
   --translated-data Stage2/data/task_specialization_translated.jsonl \
   --output-dir Stage2/outputs/augmentation \
   --mt-path facebook/nllb-200-3.3B \
-  --llm-path Qwen/Qwen3-VL-8B-Instruct
+  --llm-path Qwen/Qwen3-VL-8B-Instruct \
+  --use-wandb \
+  --wandb-mode offline \
+  --wandb-project mindmerger-stage2
 ```
 
 ## Notes
@@ -68,3 +71,4 @@ python Stage2/run_augmentation.py \
 - The model keeps MT encoder and Qwen3-VL frozen, and trains only mapping + boundary.
 - Question overlap check is normalized exact match by default for strict leakage prevention.
 - You can optionally tune overlap behavior in `prepare_task_specialization_data.py` via CLI flags.
+- W&B logs include `train/loss`, `eval/loss`, and `eval/perplexity`; offline mode writes local run files for later plotting/sync.
