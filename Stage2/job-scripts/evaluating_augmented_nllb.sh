@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=6:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -89,9 +89,9 @@ for lang in ["sw", "wo", "yo"]:
 print("MMLU-ProX cache OK.")
 PY
 
-echo "=== Run post-augmentation MMLU-ProX eval ==="
-cd "$PROJECT_ROOT"
-python -u Stage1/run_evaluating.py \
+echo "=== Run post-augmentation MMLU-ProX eval (Stage 2: BOS + X_m + boundary + T) ==="
+cd "$STAGE2"
+python -u run_evaluating.py \
   --llm-path "$LLM_PATH" \
   --mt-path "$MT_PATH" \
   --mapping-ckpt "$MAPPING_CKPT" \

@@ -3,6 +3,30 @@ from __future__ import annotations
 import torch
 from torch import nn
 from transformers import M2M100Model, Qwen3VLForConditionalGeneration
+from transformers.generation.logits_process import LogitsProcessorList
+
+
+class PresencePenaltyGeneratedOnly:
+    """Apply a presence penalty to tokens seen in the generated suffix only.
+
+    Mirrors Stage1's logits processor so Stage2 evaluation can match the
+    decoding configuration used elsewhere in the project.
+    """
+
+    def __init__(self, penalty: float, prompt_len: int):
+        self.penalty = float(penalty)
+        self.prompt_len = int(prompt_len)
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        if self.penalty == 0.0:
+            return scores
+        if input_ids.size(1) <= self.prompt_len:
+            return scores
+        gen_part = input_ids[:, self.prompt_len:]
+        for b in range(input_ids.size(0)):
+            seen = torch.unique(gen_part[b])
+            scores[b, seen] -= self.penalty
+        return scores
 
 
 class MLP(nn.Module):
@@ -151,3 +175,88 @@ class AugmentedMindMerger(nn.Module):
             labels=labels,
         )
         return out.loss
+
+    def _build_inputs_embeds_for_generate(
+        self,
+        input_ids_mt: torch.Tensor,
+        attention_mask_mt: torch.Tensor,
+        input_ids_query_llm: torch.Tensor,
+        mask_query_llm: torch.Tensor,
+    ):
+        """Construct the same prefix used at training time, minus the labels:
+            [BOS] + X_m + [end_boundary] + T
+        Returns (inputs_embeds, attention_mask) ready for `model_llm.generate`.
+        """
+        device = input_ids_mt.device
+        bs = input_ids_mt.size(0)
+        llm_dtype = self.llm_dtype
+
+        end_boundary = self.mapping.get_embed().expand([bs, 1, -1])
+        bos = torch.full((bs,), self.llm_bos_token_id, dtype=torch.long, device=device)
+        bos_embedding = self.llm_embedding_layer(bos).view(bs, 1, -1)
+        ones = torch.ones([bs, 1], dtype=torch.long, device=device)
+
+        mt_encoder_outputs = self.encoder_mt(
+            input_ids=input_ids_mt,
+            attention_mask=attention_mask_mt,
+            output_hidden_states=False,
+        )
+        x_m = self.mapping(mt_encoder_outputs[0])
+        t_embed = self.llm_embedding_layer(input_ids_query_llm)
+
+        x_m = x_m.to(llm_dtype)
+        end_boundary = end_boundary.to(llm_dtype)
+        bos_embedding = bos_embedding.to(llm_dtype)
+        t_embed = t_embed.to(llm_dtype)
+
+        llm_input_embedding = torch.cat([bos_embedding, x_m, end_boundary, t_embed], dim=1)
+        llm_input_mask = torch.cat([ones, attention_mask_mt, ones, mask_query_llm], dim=1)
+
+        llm_input_embedding, llm_input_mask, _ = self.squeeze_pad(
+            llm_input_embedding, llm_input_mask
+        )
+        return llm_input_embedding, llm_input_mask
+
+    @torch.inference_mode()
+    def generate(
+        self,
+        input_ids_mt: torch.Tensor,
+        attention_mask_mt: torch.Tensor,
+        input_ids_query_llm: torch.Tensor,
+        mask_query_llm: torch.Tensor,
+        tokenizer_llm,
+        generation_kwargs: dict | None = None,
+        presence_penalty: float | None = None,
+    ) -> list[str]:
+        """Decode answers from the augmentation prefix `BOS + X_m + boundary + T`.
+
+        Returns a list of decoded strings (one per batch row).
+        """
+        llm_input_embedding, llm_input_mask = self._build_inputs_embeds_for_generate(
+            input_ids_mt, attention_mask_mt, input_ids_query_llm, mask_query_llm
+        )
+        prefix_len = llm_input_embedding.size(1)
+        gen_kwargs = dict(
+            inputs_embeds=llm_input_embedding,
+            attention_mask=llm_input_mask,
+            max_new_tokens=self.max_gen_len,
+            pad_token_id=self.llm_pad_token_id,
+            do_sample=False,
+        )
+        if presence_penalty is not None and presence_penalty != 0.0:
+            gen_kwargs["logits_processor"] = LogitsProcessorList(
+                [PresencePenaltyGeneratedOnly(presence_penalty, prefix_len)]
+            )
+        if generation_kwargs is not None:
+            gen_kwargs.update(generation_kwargs)
+
+        generate_ids = self.model_llm.generate(**gen_kwargs)
+        # When using `inputs_embeds`, some HF versions return only the new
+        # tokens; others return prefix+new. Normalise both cases.
+        if generate_ids.shape[1] > prefix_len:
+            new_ids = generate_ids[:, prefix_len:]
+        else:
+            new_ids = generate_ids
+        return tokenizer_llm.batch_decode(
+            new_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
