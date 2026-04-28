@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=30:00:00
+#SBATCH --time=48:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -95,6 +95,5 @@ PY
 # ---------------------------
 python -u "$PROJECT_ROOT/Baseline/mmlu_prox.py" \
   --model-id "$MODEL_PATH" \
-  --langs sw wo yo \
   --local-files-only
 
