@@ -90,6 +90,13 @@ class AugmentedMindMerger(nn.Module):
         hidden_states = hidden_states[keep_idx.unsqueeze(dim=-1).expand_as(hidden_states)].view(bs, -1, dim)
         return hidden_states, masks, keep_idx
 
+    @property
+    def llm_dtype(self) -> torch.dtype:
+        # The LLM is loaded in its checkpoint dtype (typically bf16 for Qwen3-VL)
+        # while the trainable Mapping stays in fp32 for stable AdamW updates.
+        # Use the LLM embedding dtype as the canonical "compute" dtype for the LLM.
+        return self.llm_embedding_layer.weight.dtype
+
     def forward(
         self,
         input_ids_mt: torch.Tensor,
@@ -101,6 +108,7 @@ class AugmentedMindMerger(nn.Module):
     ):
         device = input_ids_mt.device
         bs = input_ids_mt.size(0)
+        llm_dtype = self.llm_dtype
 
         end_boundary = self.mapping.get_embed().expand([bs, 1, -1])
         bos = torch.full((bs,), self.llm_bos_token_id, dtype=torch.long, device=device)
@@ -115,11 +123,19 @@ class AugmentedMindMerger(nn.Module):
         x_m = self.mapping(mt_encoder_outputs[0])
         t_embed = self.llm_embedding_layer(input_ids_query_llm)
 
+        # Align dtypes: the trainable mapping (fp32) feeds into a frozen LLM
+        # whose weights live in bf16. Cast the prefix pieces produced by the
+        # mapping to the LLM dtype so the concat doesn't promote to fp32.
+        x_m = x_m.to(llm_dtype)
+        end_boundary = end_boundary.to(llm_dtype)
+        bos_embedding = bos_embedding.to(llm_dtype)
+        t_embed = t_embed.to(llm_dtype)
+
         llm_input_embedding = torch.cat([bos_embedding, x_m, end_boundary, t_embed], dim=1)
         llm_input_mask = torch.cat([ones, attention_mask_mt, ones, mask_query_llm], dim=1)
 
         pad_labels = torch.full_like(llm_input_mask, -100)
-        label_embedding = self.llm_embedding_layer(labels)
+        label_embedding = self.llm_embedding_layer(labels).to(llm_dtype)
         llm_input_embedding = torch.cat([llm_input_embedding, label_embedding], dim=1)
         llm_input_mask = torch.cat([llm_input_mask, mask_label], dim=1)
 

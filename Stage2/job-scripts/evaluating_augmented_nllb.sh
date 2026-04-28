@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=10:00:00
+#SBATCH --time=6:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -21,12 +21,13 @@ LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 MAPPING_CKPT="$STAGE2/outputs/augmentation/mapping/pytorch_model.bin"
 
-# Resolve HuggingFace cache repo directory to a concrete snapshot directory.
-if [ -d "$MT_PATH/snapshots" ]; then
-  SNAPSHOT_DIR="$(ls -d "$MT_PATH"/snapshots/* 2>/dev/null | head -n 1 || true)"
-  if [ -n "$SNAPSHOT_DIR" ]; then
-    MT_PATH="$SNAPSHOT_DIR"
-  fi
+if [ -d "$MT_PATH" ]; then
+  for d in "$MT_PATH"/*; do
+    if [ -d "$d" ]; then
+      MT_PATH="$d"
+      break
+    fi
+  done
 fi
 
 echo "=== Job info ==="
