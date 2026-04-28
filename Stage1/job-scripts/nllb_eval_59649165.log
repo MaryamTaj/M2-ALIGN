@@ -1,104 +1,0 @@
-=== Job info ===
-Mon Apr 20 15:33:56 EDT 2026
-ng10906
-SLURM_JOB_ID=59649165
-Mon Apr 20 15:33:56 2026       
-+-----------------------------------------------------------------------------------------+
-| NVIDIA-SMI 570.211.01             Driver Version: 570.211.01     CUDA Version: 12.8     |
-|-----------------------------------------+------------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
-|                                         |                        |               MIG M. |
-|=========================================+========================+======================|
-|   0  NVIDIA A100-SXM4-40GB          Off |   00000000:01:00.0 Off |                    0 |
-| N/A   32C    P0             53W /  400W |       0MiB /  40960MiB |      0%      Default |
-|                                         |                        |             Disabled |
-+-----------------------------------------+------------------------+----------------------+
-                                                                                         
-+-----------------------------------------------------------------------------------------+
-| Processes:                                                                              |
-|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
-|        ID   ID                                                               Usage      |
-|=========================================================================================|
-|  No running processes found                                                             |
-+-----------------------------------------------------------------------------------------+
-
-=== Load modules ===
-
-=== Activate virtual environment ===
-Python 3.11.5
-
-=== Hugging Face cache (offline) ===
-Loaded .tokens file
-
-=== Cached MMLU-ProX check (sw, wo, yo) ===
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'sw' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/sw/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:06 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'sw' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/sw/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:06 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'wo' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/wo/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:25 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'wo' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/wo/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:25 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'yo' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/yo/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:26 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'yo' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/yo/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:26 2026).
-MMLU-ProX cache OK.
-=== Run MindMerger MMLU-ProX eval ===
-Loading weights:   0%|          | 0/511 [00:00<?, ?it/s]Loading weights: 100%|██████████| 511/511 [00:00<00:00, 40158.31it/s]
-[1mM2M100Model LOAD REPORT[0m from: /scratch/tajm/huggingface/nllb-200-distilled-600M-full
-Key            | Status     |  | 
----------------+------------+--+-
-lm_head.weight | UNEXPECTED |  | 
-
-Notes:
-- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
-MT model size: 615.073792
-used size: 413.51168
-Loading weights:   0%|          | 0/750 [00:00<?, ?it/s]Loading weights:   2%|▏         | 15/750 [00:01<00:54, 13.43it/s]Loading weights:   2%|▏         | 17/750 [00:02<01:44,  7.00it/s]Loading weights:   3%|▎         | 25/750 [00:02<00:59, 12.26it/s]Loading weights:   4%|▍         | 29/750 [00:02<00:48, 14.77it/s]Loading weights:   6%|▋         | 47/750 [00:02<00:27, 25.60it/s]Loading weights:   9%|▉         | 69/750 [00:02<00:14, 45.63it/s]Loading weights:  12%|█▏        | 87/750 [00:03<00:11, 59.70it/s]Loading weights:  13%|█▎        | 99/750 [00:03<00:09, 68.34it/s]Loading weights:  15%|█▍        | 110/750 [00:04<00:27, 23.69it/s]Loading weights:  16%|█▌        | 118/750 [00:04<00:24, 26.05it/s]Loading weights:  17%|█▋        | 126/750 [00:04<00:21, 29.63it/s]Loading weights:  18%|█▊        | 133/750 [00:06<00:43, 14.09it/s]Loading weights:  18%|█▊        | 138/750 [00:07<01:12,  8.41it/s]Loading weights:  19%|█▉        | 143/750 [00:08<01:21,  7.46it/s]Loading weights:  22%|██▏       | 167/750 [00:08<00:33, 17.24it/s]Loading weights:  25%|██▍       | 185/750 [00:09<00:21, 26.06it/s]Loading weights:  26%|██▌       | 195/750 [00:09<00:18, 29.40it/s]Loading weights:  27%|██▋       | 204/750 [00:09<00:15, 34.32it/s]Loading weights:  30%|██▉       | 223/750 [00:09<00:11, 47.53it/s]Loading weights:  33%|███▎      | 249/750 [00:09<00:07, 67.24it/s]Loading weights:  35%|███▍      | 260/750 [00:11<00:20, 23.56it/s]Loading weights:  36%|███▌      | 269/750 [00:12<00:33, 14.32it/s]Loading weights:  37%|███▋      | 280/750 [00:15<00:53,  8.72it/s]Loading weights:  39%|███▉      | 291/750 [00:15<00:41, 11.02it/s]Loading weights:  41%|████      | 306/750 [00:16<00:27, 15.96it/s]Loading weights:  42%|████▏     | 313/750 [00:16<00:30, 14.17it/s]Loading weights:  44%|████▎     | 328/750 [00:16<00:19, 21.11it/s]Loading weights:  45%|████▌     | 340/750 [00:17<00:14, 27.36it/s]Loading weights:  48%|████▊     | 358/750 [00:17<00:09, 39.97it/s]Loading weights:  51%|█████▏    | 386/750 [00:17<00:06, 58.48it/s]Loading weights:  53%|█████▎    | 397/750 [00:17<00:05, 64.55it/s]Loading weights:  54%|█████▍    | 408/750 [00:19<00:20, 17.06it/s]Loading weights:  55%|█████▌    | 416/750 [00:20<00:23, 14.42it/s]Loading weights:  58%|█████▊    | 436/750 [00:20<00:13, 22.93it/s]Loading weights:  62%|██████▏   | 463/750 [00:20<00:07, 38.02it/s]Loading weights:  64%|██████▍   | 479/750 [00:20<00:05, 46.91it/s]Loading weights:  66%|██████▌   | 493/750 [00:21<00:07, 33.85it/s]Loading weights:  67%|██████▋   | 503/750 [00:22<00:07, 33.35it/s]Loading weights:  68%|██████▊   | 512/750 [00:22<00:08, 28.18it/s]Loading weights:  69%|██████▉   | 519/750 [00:24<00:19, 11.70it/s]Loading weights:  71%|███████▏  | 536/750 [00:24<00:11, 18.29it/s]Loading weights:  73%|███████▎  | 546/750 [00:24<00:08, 22.77it/s]Loading weights:  75%|███████▌  | 564/750 [00:25<00:09, 19.98it/s]Loading weights:  77%|███████▋  | 580/750 [00:26<00:08, 20.14it/s]Loading weights:  78%|███████▊  | 587/750 [00:27<00:11, 14.65it/s]Loading weights:  81%|████████▏ | 610/750 [00:28<00:05, 24.74it/s]Loading weights:  85%|████████▍ | 636/750 [00:28<00:02, 39.81it/s]Loading weights:  89%|████████▉ | 670/750 [00:28<00:01, 64.34it/s]Loading weights:  93%|█████████▎| 694/750 [00:28<00:00, 80.27it/s]Loading weights:  97%|█████████▋| 724/750 [00:28<00:00, 104.84it/s]Loading weights:  99%|█████████▉| 744/750 [00:28<00:00, 92.70it/s] Loading weights: 100%|██████████| 750/750 [00:28<00:00, 26.07it/s]
-mapping layer size: 10.496
-Loaded mapping from: /home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'sw' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/sw/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:06 2026).
-Using the latest cached version of the dataset since li-lab/MMLU-ProX couldn't be found on the Hugging Face Hub (offline mode is enabled).
-Found the latest cached dataset configuration 'sw' at /scratch/tajm/huggingface/datasets/li-lab___mmlu-pro_x/sw/0.0.0/8e6106a6c6ce1c5027e66cc338143cf997b2aa09 (last modified on Wed Feb 11 16:16:06 2026).
-
-Evaluating language: sw (Swahili, 11759 examples) with 5-shot
-  0%|          | 0/11759 [00:00<?, ?it/s]  0%|          | 0/11759 [00:00<?, ?it/s]
-Traceback (most recent call last):
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/run_evaluating.py", line 281, in <module>
-    main()
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/run_evaluating.py", line 267, in main
-    evaluate(
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/run_evaluating.py", line 203, in evaluate
-    pred = pick_choice(
-           ^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
-    return func(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/run_evaluating.py", line 112, in pick_choice
-    out_text = model.generate_from_mt(
-               ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
-    return func(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/modeling_mindmerger.py", line 184, in generate_from_mt
-    llm_input_embedding, llm_input_mask = self._build_inputs_embeds_for_generate(
-                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/lustre06/project/6072380/tajm/M2-ALIGN/Stage1/modeling_mindmerger.py", line 149, in _build_inputs_embeds_for_generate
-    bos_embedding = self.llm_embedding_layer(bos)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1790, in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/nn/modules/sparse.py", line 189, in forward
-    return F.embedding(
-           ^^^^^^^^^^^^
-  File "/scratch/tajm/venvs/m2-align/lib/python3.11/site-packages/torch/nn/functional.py", line 2567, in embedding
-    return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-RuntimeError: Expected all tensors to be on the same device, but got index is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA__index_select)
