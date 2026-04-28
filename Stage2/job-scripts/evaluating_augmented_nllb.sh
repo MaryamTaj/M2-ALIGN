@@ -18,7 +18,7 @@ STAGE1="$PROJECT_ROOT/Stage1"
 STAGE2="$PROJECT_ROOT/Stage2"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-MT_PATH="$SCRATCH/huggingface/nllb-200-3.3B-full"
+MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 MAPPING_CKPT="$STAGE2/outputs/augmentation/mapping/pytorch_model.bin"
 
 # Resolve HuggingFace cache repo directory to a concrete snapshot directory.

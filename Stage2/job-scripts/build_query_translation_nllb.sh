@@ -18,8 +18,6 @@ STAGE2="$PROJECT_ROOT/Stage2"
 
 INPUT_PATH="$STAGE2/data/task_specialization_en.jsonl"
 OUTPUT_PATH="$STAGE2/data/task_specialization_translated.jsonl"
-# You can override this before sbatch:
-#   sbatch --export=NLLB_MODEL=/path/to/local/nllb_snapshot ...
 NLLB_MODEL="${NLLB_MODEL:-$SCRATCH/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/manual}"
 TARGET_LANGS="sw,yo,wo"
 

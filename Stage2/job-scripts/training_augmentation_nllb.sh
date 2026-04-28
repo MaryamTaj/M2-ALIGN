@@ -18,7 +18,7 @@ STAGE2="$PROJECT_ROOT/Stage2"
 STAGE1="$PROJECT_ROOT/Stage1"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-MT_PATH="$SCRATCH/huggingface/nllb-200-3.3B-full"
+MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin"
 
 EN_DATA="$STAGE2/data/task_specialization_en.jsonl"

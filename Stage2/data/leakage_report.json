@@ -1,0 +1,6 @@
+{
+  "mmlu_prox_en_test_count": 11621,
+  "raw_candidate_count": 108169,
+  "removed_due_to_overlap": 16,
+  "final_task_specialization_count": 98470
+}
