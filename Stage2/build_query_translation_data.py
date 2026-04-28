@@ -39,10 +39,25 @@ LANG_NAME = {
 def read_jsonl(path: str) -> list[dict]:
     rows = []
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
+        for lineno, raw_line in enumerate(f, 1):
+            line = raw_line.strip().lstrip("\ufeff")
+            if not line:
+                continue
+            if not line.startswith("{"):
+                brace = line.find("{")
+                if brace > 0:
+                    print(
+                        f"warning: {path}:{lineno} starts with non-JSON prefix "
+                        f"{line[:brace]!r}; stripping before parse."
+                    )
+                    line = line[brace:]
+            try:
                 rows.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Failed to parse JSON at {path}:{lineno}: {exc.msg} "
+                    f"(line preview: {line[:120]!r})"
+                ) from exc
     return rows
 
 
