@@ -54,6 +54,8 @@ def main(args):
 
     rows = read_jsonl(args.input_path)
     print(f"Input rows: {len(rows)}")
+    rows = rows[: args.max_input_rows]
+    print(f"Rows selected for translation: {len(rows)}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = NllbTokenizer.from_pretrained(args.nllb_model)
@@ -108,6 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--input-path", type=str, required=True)
     parser.add_argument("--output-path", type=str, required=True)
     parser.add_argument("--target-languages", type=str, default="sw,yo,wo")
+    parser.add_argument("--max-input-rows", type=int, default=3000)
     parser.add_argument("--nllb-model", type=str, default="facebook/nllb-200-3.3B")
     parser.add_argument("--max-source-length", type=int, default=256)
     parser.add_argument("--max-target-length", type=int, default=256)
