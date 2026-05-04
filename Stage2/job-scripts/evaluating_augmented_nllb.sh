@@ -80,10 +80,10 @@ if [ ! -f "$MAPPING_CKPT" ]; then
   exit 1
 fi
 
-echo "=== Cached MMLU-ProX check (sw, wo, yo) ==="
+echo "=== Cached MMLU-ProX check (fr) ==="
 python - <<'PY'
 from datasets import load_dataset
-for lang in ["sw", "wo", "yo"]:
+for lang in ["fr"]:
     load_dataset("li-lab/MMLU-ProX", lang, split="validation", download_mode="reuse_dataset_if_exists")
     load_dataset("li-lab/MMLU-ProX", lang, split="test", download_mode="reuse_dataset_if_exists")
 print("MMLU-ProX cache OK.")
@@ -95,8 +95,9 @@ python -u run_evaluating.py \
   --llm-path "$LLM_PATH" \
   --mt-path "$MT_PATH" \
   --mapping-ckpt "$MAPPING_CKPT" \
-  --langs sw wo yo \
+  --langs fr \
   --max-seq-len 256 \
   --max-gen-len 256 \
+  --print-sample-count 20 \
   --local-files-only
 

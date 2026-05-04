@@ -25,6 +25,7 @@ NLLB_LANG_MAP = {
     "Swahili": "swh_Latn",
     "Yoruba": "yor_Latn",
     "Wolof": "wol_Latn",
+    "French": "fra_Latn",
 }
 
 

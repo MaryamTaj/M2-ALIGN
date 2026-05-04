@@ -143,7 +143,7 @@ def main(args):
 
     if stage_name == 'mapping':
         if "nllb_corpus" in task:
-            languages = ['Swahili', 'Yoruba', 'Wolof']
+            languages = [x.strip() for x in args.nllb_languages.split(",") if x.strip()]
             train_set = read_nllb(args.nllb_data_dir, train_num, languages)
         elif 'math' in task:
             languages = ['Bengali', 'Thai', 'Swahili', 'Japanese', 'Chinese', 'German', 'French', 'Russian',
@@ -451,6 +451,12 @@ if __name__ == "__main__":
         default='./data/nllb'
     )
     parser.add_argument(
+        "--nllb_languages",
+        type=str,
+        default="French",
+        help="For task nllb_corpus: comma-separated source languages (must match JSONL files from load_nllb_corpus.py).",
+    )
+    parser.add_argument(
         "--use_wandb",
         type=ast.literal_eval,
         default=False
@@ -495,7 +501,10 @@ if __name__ == "__main__":
      'Vietnamese': 'vi', 'Hindi': 'hi', 'Flemish': 'nl', 'Urdu': 'ur'}
 
     langs_map_nllb = {
-    'Swahili': 'swh_Latn', 'Yoruba': 'yor_Latn','Wolof': 'wol_Latn'
+        "Swahili": "swh_Latn",
+        "Yoruba": "yor_Latn",
+        "Wolof": "wol_Latn",
+        "French": "fra_Latn",
     }
 
     if 'nllb' in args.mt_path:

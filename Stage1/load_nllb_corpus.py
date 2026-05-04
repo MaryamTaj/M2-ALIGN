@@ -6,10 +6,11 @@ from datasets import load_dataset
 
 LANG_TO_NLLB = {
     "English": "eng_Latn",
-    'Swahili': 'swh_Latn', 
-    'Yoruba': 'yor_Latn',
-    'Wolof': 'wol_Latn'
-    }
+    "Swahili": "swh_Latn",
+    "Yoruba": "yor_Latn",
+    "Wolof": "wol_Latn",
+    "French": "fra_Latn",
+}
 
 
 def main():
@@ -17,10 +18,19 @@ def main():
     parser.add_argument("--output_dir", type=str, default="./data/nllb")
     parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--samples_per_language", type=int, default=3000)
+    parser.add_argument(
+        "--languages",
+        type=str,
+        default="French",
+        help="Comma-separated source language names matching keys in LANG_TO_NLLB (e.g. French or Swahili,Yoruba,Wolof).",
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    langs = ["Swahili","Yoruba","Wolof"]
+    langs = [x.strip() for x in args.languages.split(",") if x.strip()]
+    for name in langs:
+        if name not in LANG_TO_NLLB:
+            raise ValueError(f"Unknown language {name!r}; allowed: {sorted(LANG_TO_NLLB)}")
 
     for source_lang in langs:
         source_code = LANG_TO_NLLB[source_lang]

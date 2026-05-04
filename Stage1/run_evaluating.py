@@ -35,12 +35,14 @@ MMLU_TO_SOURCE_LANGUAGE = {
     "sw": "Swahili",
     "wo": "Wolof",
     "yo": "Yoruba",
+    "fr": "French",
 }
 
 LANGS_MAP_NLLB = {
     "Swahili": "swh_Latn",
     "Yoruba": "yor_Latn",
     "Wolof": "wol_Latn",
+    "French": "fra_Latn",
 }
 
 
@@ -97,7 +99,7 @@ def pick_choice(
     max_seq_len: int,
     choices: list[str],
     amp_dtype: torch.dtype,
-) -> str:
+) -> tuple[str, str]:
     input_ids_m2m, attention_mask_m2m = mt_input_features(
         [prompt], tokenizer_mt, max_seq_len, [source_language], langs_map
     )
@@ -119,8 +121,8 @@ def pick_choice(
         )
     for ch in out_text:
         if ch in choices:
-            return ch
-    return choices[0]
+            return ch, out_text
+    return choices[0], out_text
 
 
 def evaluate(
@@ -134,6 +136,7 @@ def evaluate(
     max_gen_len: int,
     max_test_examples: int | None,
     max_val_examples: int | None,
+    print_sample_count: int = 20,
 ):
     device = torch.device("cuda")
     cap_major = torch.cuda.get_device_capability(0)[0]
@@ -206,9 +209,10 @@ def evaluate(
         total = len(test_ds)
         print(f"\nEvaluating language: {lang} ({source_language}, {total} examples) with {N_SHOT}-shot")
 
+        debug_rows: list[tuple[str, str, str, str, bool]] = []
         for sample in tqdm(test_ds):
             prompt, choice_letters = build_fewshot_prompt(demo_samples, sample)
-            pred = pick_choice(
+            pred, raw_out = pick_choice(
                 model,
                 tokenizer_mt,
                 tokenizer_llm,
@@ -219,8 +223,24 @@ def evaluate(
                 choice_letters,
                 amp_dtype,
             )
-            if pred == sample["answer"]:
+            ok = pred == sample["answer"]
+            if ok:
                 correct += 1
+            if print_sample_count > 0 and len(debug_rows) < print_sample_count:
+                debug_rows.append((prompt, raw_out, pred, sample["answer"], ok))
+
+        if debug_rows:
+            print(f"\n=== Printed examples (n={len(debug_rows)}) for MMLU-ProX lang={lang} ===")
+            for i, (prompt, raw_out, pred, target, correct_i) in enumerate(debug_rows, 1):
+                print(
+                    f"\n--- example {i}/{len(debug_rows)} ---\n"
+                    f"INPUT (few-shot MCQ prompt):\n{prompt}\n\n"
+                    f"MODEL OUTPUT (raw decode):\n{raw_out!r}\n\n"
+                    f"PREDICTED LETTER: {pred}\n"
+                    f"TARGET LETTER: {target}\n"
+                    f"CORRECT: {correct_i}\n",
+                    flush=True,
+                )
 
         acc = correct / total * 100
         results[lang] = acc
@@ -263,6 +283,12 @@ def main():
     parser.add_argument("--max-val-examples", type=int, default=None)
     parser.add_argument("--max-seq-len", type=int, default=256)
     parser.add_argument("--max-gen-len", type=int, default=256)
+    parser.add_argument(
+        "--print-sample-count",
+        type=int,
+        default=20,
+        help="Print this many (input, raw output, target letter) triples per language; 0 disables.",
+    )
     args = parser.parse_args()
 
     max_test = args.max_test_examples
@@ -282,6 +308,7 @@ def main():
         max_gen_len=args.max_gen_len,
         max_test_examples=max_test,
         max_val_examples=max_val,
+        print_sample_count=args.print_sample_count,
     )
 
 

@@ -79,7 +79,9 @@ else
 fi
 echo
 
-echo "=== Start Stage1 NLLB mapping training ==="
+echo "=== Start Stage1 NLLB mapping training (French source) ==="
+echo "If ./data/nllb/French_to_English.jsonl is missing, run from Stage1:"
+echo "  python load_nllb_corpus.py --languages French --samples_per_language 3000 --output_dir ./data/nllb"
 cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 deepspeed --master_port 50002 run_training.py --deepspeed \
   --llm_path "$LLM_PATH" \
@@ -88,6 +90,7 @@ deepspeed --master_port 50002 run_training.py --deepspeed \
   --task nllb_corpus \
   --augmentation False \
   --nllb_data_dir ./data/nllb \
+  --nllb_languages French \
   --train_num 3000 \
   --val_size 900 \
   --train_batch_size 24 \
