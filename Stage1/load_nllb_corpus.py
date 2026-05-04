@@ -24,7 +24,21 @@ def main():
         default="French",
         help="Comma-separated source language names matching keys in LANG_TO_NLLB (e.g. French or Swahili,Yoruba,Wolof).",
     )
+    parser.add_argument(
+        "--streaming",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Default on: stream rows from the Hub and stop after samples_per_language (avoids multi‑GiB full downloads). "
+        "Use --no-streaming only if you want a full local cache (needs HF_DATASETS_CACHE on a large filesystem).",
+    )
     args = parser.parse_args()
+
+    cache_hint = os.environ.get("HF_DATASETS_CACHE") or os.environ.get("HF_HOME") or "~/.cache/huggingface"
+    print(
+        f"load_nllb_corpus: streaming={args.streaming}; "
+        f"HF cache env effective root ~ {cache_hint} "
+        "(set HF_HOME/HF_DATASETS_CACHE to $SCRATCH/... on clusters if not streaming)."
+    )
 
     os.makedirs(args.output_dir, exist_ok=True)
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
@@ -36,7 +50,12 @@ def main():
         source_code = LANG_TO_NLLB[source_lang]
         target_code = LANG_TO_NLLB["English"]
         config_name = f"{target_code}-{source_code}"
-        ds = load_dataset("allenai/nllb", config_name, split=args.split)
+        ds = load_dataset(
+            "allenai/nllb",
+            config_name,
+            split=args.split,
+            streaming=args.streaming,
+        )
         out_path = os.path.join(args.output_dir, f"{source_lang}_to_English.jsonl")
         kept = 0
         with open(out_path, "w", encoding="utf-8") as f:
