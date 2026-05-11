@@ -88,20 +88,34 @@ def build_fewshot_prompt(demo_samples: list, test_sample: dict) -> tuple[str, li
     return "\n\n".join(blocks), letters
 
 
+def build_nllb_test_text(test_sample: dict) -> str:
+    # Stage 1 has no LLM-side prompt: the model conditions only on the NLLB
+    # encoder's output. Feeding NLLB the full 5-shot prompt (mostly English
+    # scaffolding + English demos) both mismatches its ``src_lang`` setting
+    # and right-truncates the actual test question away under max_seq_len=256.
+    # Encode only the target-language test question + its options.
+    letters, texts = extract_options(test_sample)
+    options_block = format_options_block(letters, texts)
+    return f"{test_sample['question']}\n{options_block}"
+
+
 @torch.inference_mode()
 def pick_choice(
     model: MindMerger,
     tokenizer_mt: AutoTokenizer,
     tokenizer_llm,
-    prompt: str,
+    nllb_text: str,
     source_language: str,
     langs_map: dict,
     max_seq_len: int,
     choices: list[str],
     amp_dtype: torch.dtype,
 ) -> tuple[str, str]:
+    # Stage 1 only tokenizes for NLLB (no LLM-side ``T``). We feed it the
+    # short target-language test question + options - never the full 5-shot
+    # prompt - so the test content survives ``max_seq_len`` truncation.
     input_ids_m2m, attention_mask_m2m = mt_input_features(
-        [prompt], tokenizer_mt, max_seq_len, [source_language], langs_map
+        [nllb_text], tokenizer_mt, max_seq_len, [source_language], langs_map
     )
     gen_kw = dict(
         do_sample=True,
@@ -212,11 +226,12 @@ def evaluate(
         debug_rows: list[tuple[str, str, str, str, bool]] = []
         for sample in tqdm(test_ds):
             prompt, choice_letters = build_fewshot_prompt(demo_samples, sample)
+            nllb_text = build_nllb_test_text(sample)
             pred, raw_out = pick_choice(
                 model,
                 tokenizer_mt,
                 tokenizer_llm,
-                prompt,
+                nllb_text,
                 source_language,
                 LANGS_MAP_NLLB,
                 max_seq_len,
