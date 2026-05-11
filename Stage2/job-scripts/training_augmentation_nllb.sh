@@ -22,7 +22,8 @@ MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin"
 
 EN_DATA="$STAGE2/data/task_specialization_en.jsonl"
-TRANSLATED_DATA="$STAGE2/data/task_specialization_translated.jsonl"
+# French-only augmented rows (generate with Stage2/build_query_translation_data.py --target-languages fr).
+TRANSLATED_DATA="$STAGE2/data/task_specialization_translated_fr.jsonl"
 OUTPUT_DIR="$STAGE2/outputs/augmentation"
 
 if [ -d "$MT_PATH" ]; then

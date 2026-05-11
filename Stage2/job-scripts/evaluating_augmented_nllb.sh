@@ -97,6 +97,7 @@ python -u run_evaluating.py \
   --mapping-ckpt "$MAPPING_CKPT" \
   --langs fr \
   --max-seq-len 256 \
+  --max-llm-seq-len 4096 \
   --max-gen-len 256 \
   --print-sample-count 20 \
   --local-files-only
