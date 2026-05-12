@@ -52,6 +52,13 @@ MMLU_TO_SOURCE_LANGUAGE = {
     "fr": "French",
 }
 
+LANGUAGE_NAME_TO_MMLU_CODE = {
+    "swahili": "sw",
+    "wolof": "wo",
+    "yoruba": "yo",
+    "french": "fr",
+}
+
 NLLB_LANG_MAP = {
     "English": "eng_Latn",
     "Swahili": "swh_Latn",
@@ -381,7 +388,7 @@ def evaluate(
         llm_path: HF id or local path for Qwen3-VL.
         mt_path: HF id or local path for the NLLB encoder.
         mapping_ckpt: Path to the Stage 2 mapping checkpoint.
-        langs: MMLU-ProX language codes to evaluate (e.g. ``["sw", "fr"]``).
+        langs: MMLU-ProX language codes derived from full-name CLI input.
         local_files_only: If ``True``, do not attempt Hub downloads.
         max_mt_seq_len: Maximum NLLB sequence length.
         max_llm_seq_len: Maximum LLM prompt sequence length.
@@ -568,6 +575,30 @@ def _peek_training_data(logger: logging.Logger) -> None:
         logger.debug("Could not peek at training data: %s", exc)
 
 
+def normalize_lang_args(langs_csv: str) -> list[str]:
+    """Normalize comma-separated full language names to MMLU-ProX codes.
+
+    The CLI input must be a comma-separated list of full language names, e.g.
+    ``Swahili,Yoruba,Wolof``.
+    """
+    normalized: list[str] = []
+    for lang in langs_csv.split(","):
+        key = lang.strip()
+        if not key:
+            continue
+        lower = key.lower()
+        if lower in LANGUAGE_NAME_TO_MMLU_CODE:
+            normalized.append(LANGUAGE_NAME_TO_MMLU_CODE[lower])
+            continue
+        raise ValueError(
+            f"Unsupported language {lang!r}. Use full names only, comma-separated. "
+            f"Allowed names: {sorted(LANGUAGE_NAME_TO_MMLU_CODE)}."
+        )
+    if not normalized:
+        raise ValueError("No languages provided. Pass --langs as comma-separated full names.")
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -581,7 +612,10 @@ def main() -> None:
         "--mapping-ckpt", type=str,
         default="Stage2/outputs/augmentation/mapping/pytorch_model.bin",
     )
-    parser.add_argument("--langs", nargs="*", default=["sw", "wo", "yo"])
+    parser.add_argument(
+        "--langs", type=str, default="Swahili,Wolof,Yoruba",
+        help="Comma-separated full language names (e.g. Swahili,Yoruba,Wolof).",
+    )
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--max-test-examples", type=int, default=None)
@@ -606,9 +640,10 @@ def main() -> None:
     max_test = args.max_test_examples
     max_val = args.max_val_examples
     if args.smoke:
-        args.langs = ["sw"]
+        args.langs = "Swahili"
         max_test = 5 if max_test is None else max_test
         max_val = 20 if max_val is None else max_val
+    args.langs = normalize_lang_args(args.langs)
 
     evaluate(
         llm_path=args.llm_path,
