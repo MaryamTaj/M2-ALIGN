@@ -1,21 +1,27 @@
-#coding=utf-8
-import torch.fx
-from tqdm import tqdm
-from transformers import AutoTokenizer, NllbTokenizer
-import torch
-from tools.utils import save_model, set_seed
-from tools.read_datasets import *
+# coding=utf-8
+"""Stage 1 training script for MindMerger (NLLB encoder → mapping → Qwen3-VL)."""
+from __future__ import annotations
+
 import argparse
 import ast
-from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
 import json
-import deepspeed
-from tools.input_features import *
-from modeling_mindmerger import MindMerger
+import logging
 import os
-from tools.deepspeed_config import get_train_ds_config
+from datetime import datetime
+
+import deepspeed
+import torch
+from torch.utils.data import DataLoader, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm
+from transformers import AutoTokenizer, NllbTokenizer
+
 from evaluation import evaluate_ppl
+from modeling_mindmerger import MindMerger
+from tools.deepspeed_config import get_train_ds_config
+from tools.input_features import llm_input_features, mt_input_features
+from tools.read_datasets import MathDataset, read_lego, read_math_train, read_nllb, read_x_csqa_train, read_xnli_train
+from tools.utils import save_model, set_seed
 
 try:
     import wandb
@@ -23,8 +29,53 @@ except ImportError:
     wandb = None
 
 
-def _load_wandb_key_from_tokens():
-    """Best-effort loader for WANDB_API_KEY from local .tokens files."""
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def setup_logging(log_dir: str) -> logging.Logger:
+    """Create a logger that writes to stdout and a timestamped file in *log_dir*.
+
+    Args:
+        log_dir: Directory in which to create the log file (created if absent).
+
+    Returns:
+        A configured :class:`logging.Logger` instance.
+    """
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"training_{timestamp}.log")
+
+    logger = logging.getLogger("stage1_training")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+
+    return logger
+
+
+# ---------------------------------------------------------------------------
+# W&B helpers
+# ---------------------------------------------------------------------------
+
+def _load_wandb_key_from_tokens() -> bool:
+    """Load WANDB_API_KEY from a ``.tokens`` file if present.
+
+    Searches the current working directory and its parent for a file
+    named ``.tokens`` containing lines of the form ``WANDB_API_KEY=...``
+    or ``export WANDB_API_KEY=...``.  Sets the environment variable if
+    a non-empty value is found.
+
+    Returns:
+        ``True`` if a key was found and set, ``False`` otherwise.
+    """
     for candidate in (
         os.path.join(os.getcwd(), ".tokens"),
         os.path.join(os.path.dirname(os.getcwd()), ".tokens"),
@@ -50,8 +101,21 @@ def _load_wandb_key_from_tokens():
     return False
 
 
-def _init_wandb_or_disable(args, config):
-    """Initialize wandb with online/offline fallback; never crash training."""
+def _init_wandb_or_disable(args, config: dict) -> bool:
+    """Initialise Weights & Biases with online/offline fallback.
+
+    Never raises; returns ``False`` if W&B cannot be initialised so
+    callers can safely skip all ``wandb.*`` calls.
+
+    Args:
+        args: Parsed argument namespace with attributes ``wandb_mode``,
+            ``wandb_project``, ``wandb_run_name``, and
+            ``wandb_init_timeout``.
+        config: Hyperparameter dict logged to the W&B run.
+
+    Returns:
+        ``True`` if W&B was successfully initialised, ``False`` otherwise.
+    """
     if wandb is None:
         return False
 
@@ -82,7 +146,6 @@ def _init_wandb_or_disable(args, config):
         if requested_mode == "online":
             print("WANDB_API_KEY not found; disabling Weights & Biases logging.")
             return False
-        # auto mode: no key, still allow local run files via offline mode.
         os.environ["WANDB_MODE"] = "offline"
         try:
             wandb.init(
@@ -110,7 +173,6 @@ def _init_wandb_or_disable(args, config):
         if requested_mode == "online":
             print(f"wandb online init failed ({exc}); disabling Weights & Biases logging.")
             return False
-        # auto mode: fall back to offline so runs can be synced later.
         try:
             os.environ["WANDB_MODE"] = "offline"
             wandb.init(
@@ -129,7 +191,21 @@ def _init_wandb_or_disable(args, config):
             return False
 
 
-def main(args):
+# ---------------------------------------------------------------------------
+# Main training loop
+# ---------------------------------------------------------------------------
+
+def main(args, logger: logging.Logger) -> None:
+    """Run the Stage 1 mapping-layer training loop.
+
+    Loads the dataset for the requested *task* and *stage_name*, builds the
+    :class:`MindMerger` model, wraps it with DeepSpeed, then trains for
+    *epoch_num* epochs with periodic perplexity-based checkpointing.
+
+    Args:
+        args: Parsed argument namespace from :func:`argparse.ArgumentParser`.
+        logger: Logger for training progress and checkpoint messages.
+    """
     llm_path = args.llm_path
     mt_path = args.mt_path
 
@@ -138,47 +214,44 @@ def main(args):
     task = args.task
     augmentation = args.augmentation
     save_name = args.save_name
-    result_path_base = f'./results/{save_name}/{task}/{stage_name}/'
-    output_model_path_base = f'./outputs/{save_name}/{task}/{stage_name}/'
+    result_path_base = f"./results/{save_name}/{task}/{stage_name}/"
+    output_model_path_base = f"./outputs/{save_name}/{task}/{stage_name}/"
 
-    if stage_name == 'mapping':
+    languages: list[str]
+    if stage_name == "mapping":
         if "nllb_corpus" in task:
             languages = [x.strip() for x in args.nllb_languages.split(",") if x.strip()]
             train_set = read_nllb(args.nllb_data_dir, train_num, languages)
-        elif 'math' in task:
-            languages = ['Bengali', 'Thai', 'Swahili', 'Japanese', 'Chinese', 'German', 'French', 'Russian',
-                         'Spanish']
+        elif "math" in task:
+            languages = ["Bengali", "Thai", "Swahili", "Japanese", "Chinese", "German", "French", "Russian", "Spanish"]
             train_set = read_lego(train_num, languages)
-
-        elif 'csqa' in task:
-            languages = ['Urdu', 'Hindi', 'Swahili', 'Japanese', 'Vietnamese', 'Polish', 'Chinese',
-                         'Flemish', 'Russian', 'Italian', 'German', 'Portuguese', 'French', 'Spanish', 'Arabic']
+        elif "csqa" in task:
+            languages = ["Urdu", "Hindi", "Swahili", "Japanese", "Vietnamese", "Polish", "Chinese",
+                         "Flemish", "Russian", "Italian", "German", "Portuguese", "French", "Spanish", "Arabic"]
             train_set = read_lego(train_num, languages)
-
         else:
-            languages = ['Swahili', 'Urdu', 'Hindi', 'Thai', 'Arabic', 'Turkish', 'Greek',
-                          'Vietnamese', 'Chinese', 'Russian', 'Bulgarian', 'German', 'French', 'Spanish']
+            languages = ["Swahili", "Urdu", "Hindi", "Thai", "Arabic", "Turkish", "Greek",
+                         "Vietnamese", "Chinese", "Russian", "Bulgarian", "German", "French", "Spanish"]
             train_set = read_lego(train_num, languages)
-        task = 'translation'
+        task = "translation"
     else:
-        if 'math' in task:
+        if "math" in task:
             train_set = read_math_train(train_num)
-        elif 'csqa' in task:
+        elif "csqa" in task:
             train_set = read_x_csqa_train()
         else:
             train_set = read_xnli_train()
+        languages = []
 
-    val_set = train_set[:args.val_size]
+    val_set = train_set[: args.val_size]
     train_set = train_set[args.val_size:]
-
     train_set = MathDataset(train_set, task)
     val_set = MathDataset(val_set, task)
+
     lr = args.lr
     epoch_num = args.epoch_num
-
     max_seq_len = args.max_seq_len
     max_gen_len = args.max_gen_len
-
     train_batch_size = args.train_batch_size
     eval_batch_size = args.eval_batch_size
     train_micro_batch_size_per_gpu = args.train_micro_batch_size_per_gpu
@@ -190,315 +263,222 @@ def main(args):
     os.makedirs(output_model_path_base, exist_ok=True)
     os.makedirs(result_path_base, exist_ok=True)
 
-    # For NLLB models, explicitly use the slow NllbTokenizer to avoid
-    # attempting to instantiate a fast backend (which may require extra deps).
     if "nllb-200" in mt_path or "nllb" in mt_path:
         tokenizer_m2m = NllbTokenizer.from_pretrained(mt_path)
     else:
         tokenizer_m2m = AutoTokenizer.from_pretrained(mt_path, use_fast=False)
+
     try:
         tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=True)
     except (ValueError, ImportError) as e:
-        print(f"Falling back to slow LLM tokenizer for {llm_path}: {e}")
+        logger.warning("Falling back to slow LLM tokenizer for %s: %s", llm_path, e)
         tokenizer_llm = AutoTokenizer.from_pretrained(llm_path, use_fast=False)
 
     tokenizer_llm.pad_token = tokenizer_llm.eos_token
     tokenizer_llm.padding_side = "left"
-    # tokenizer_llm.pad_token = "[PAD]"
 
-    print(json.dumps({
-        'llm_path': llm_path,
-        'mt_path': mt_path,
-        'lr': lr,
-        'epoch_num': epoch_num,
-        'gradient_accumulation': gradient_accumulation,
-        'train_set:': len(train_set),
-        'val_set:': len(val_set),
-        'max_seq_len': max_seq_len,
-        'max_gen_len': max_gen_len,
-        'train_batch_size': train_batch_size,
-        'result_path': result_path_base,
-        'output_model_path': output_model_path_base,
-        'languages': languages,
-    }, indent=2))
+    config_summary = {
+        "llm_path": llm_path,
+        "mt_path": mt_path,
+        "lr": lr,
+        "epoch_num": epoch_num,
+        "gradient_accumulation": gradient_accumulation,
+        "train_size": len(train_set),
+        "val_size": len(val_set),
+        "max_seq_len": max_seq_len,
+        "max_gen_len": max_gen_len,
+        "train_batch_size": train_batch_size,
+        "result_path": result_path_base,
+        "output_model_path": output_model_path_base,
+        "languages": languages,
+    }
+    logger.info("Training config:\n%s", json.dumps(config_summary, indent=2))
 
     use_wandb = args.use_wandb and args.local_rank == 0
     if use_wandb:
         use_wandb = _init_wandb_or_disable(args, {
-            'llm_path': llm_path,
-            'mt_path': mt_path,
-            'stage_name': stage_name,
-            'task': task,
-            'train_num_per_language': train_num,
-            'train_batch_size': train_batch_size,
-            'lr': lr,
-            'max_seq_len': max_seq_len,
-            'max_gen_len': max_gen_len,
-            'languages': languages,
+            "llm_path": llm_path,
+            "mt_path": mt_path,
+            "stage_name": stage_name,
+            "task": task,
+            "train_num_per_language": train_num,
+            "train_batch_size": train_batch_size,
+            "lr": lr,
+            "max_seq_len": max_seq_len,
+            "max_gen_len": max_gen_len,
+            "languages": languages,
         })
 
-    if stage_name != 'mapping' and args.init_checkpoint is None:
-        args.init_checkpoint = f'./outputs/{save_name}/{task}/mapping/pytorch_model.bin'
-    model = MindMerger(mt_path, llm_path, max_gen_len,
-                       tokenizer_llm.bos_token_id,
-                       tokenizer_llm.pad_token_id)
+    if stage_name != "mapping" and args.init_checkpoint is None:
+        args.init_checkpoint = f"./outputs/{save_name}/{task}/mapping/pytorch_model.bin"
+
+    model = MindMerger(
+        mt_path, llm_path, max_gen_len,
+        tokenizer_llm.bos_token_id,
+        tokenizer_llm.pad_token_id,
+    )
     if args.init_checkpoint is not None:
-        init_checkpoint = args.init_checkpoint
-        checkpoint = torch.load(init_checkpoint, map_location='cpu')
-        model_dict = checkpoint['model_state_dict']
-        model.mapping.load_state_dict(model_dict, False)
-        print('mapping layer init from:', init_checkpoint)
+        checkpoint = torch.load(args.init_checkpoint, map_location="cpu")
+        model.mapping.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        logger.info("Mapping layer initialised from: %s", args.init_checkpoint)
 
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     model, optimizer, _, __ = deepspeed.initialize(
         config=ds_config,
         model=model,
         model_parameters=parameters,
-        training_data=None)
+        training_data=None,
+    )
 
     train_sampler = DistributedSampler(train_set)
     val_sampler = SequentialSampler(val_set)
 
-    train_set = torch.utils.data.DataLoader(
+    train_loader = DataLoader(
         dataset=train_set,
         batch_size=train_micro_batch_size_per_gpu,
         sampler=train_sampler,
     )
-    val_set = torch.utils.data.DataLoader(
+    val_loader = DataLoader(
         dataset=val_set,
         batch_size=eval_batch_size,
         shuffle=False,
         sampler=val_sampler,
         num_workers=1,
-        drop_last=False)
+        drop_last=False,
+    )
 
     global_rank = torch.distributed.get_rank()
-    # best_perplexity = 1000000000
-    best_perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
-                                   max_seq_len, max_gen_len, langs_map, augmentation)
+    best_perplexity = evaluate_ppl(
+        model, val_loader, tokenizer_llm, tokenizer_m2m,
+        max_seq_len, max_gen_len, langs_map, augmentation,
+    )
+    logger.info("Initial validation perplexity: %.4f", best_perplexity)
     if use_wandb:
-        wandb.log({'eval/perplexity': best_perplexity, 'train/global_step': 0})
+        wandb.log({"eval/perplexity": best_perplexity, "train/global_step": 0})
+
     eval_step = 2000
     global_step = 0
     for epoch in range(epoch_num):
         model.train()
-        tr_loss, nb_tr_steps = 0, 0
+        tr_loss, nb_tr_steps = 0.0, 0
         step_count = 0
-        step_trange = tqdm(train_set)
+        step_trange = tqdm(train_loader)
         for train_step in step_trange:
-            sources = train_step['source']
-            prompts = train_step['prompt']
-            targets = train_step['target']
-            source_languages = train_step['source_language']
+            sources = train_step["source"]
+            prompts = train_step["prompt"]
+            targets = train_step["target"]
+            source_languages = train_step["source_language"]
 
-            input_ids_m2m, attention_mask_m2m = mt_input_features(sources, tokenizer_m2m,
-                                                                  max_seq_len, source_languages,
-                                                                  langs_map)
-            add_bos_token = False
-            add_eos_token = True
-            labels, mask_label = llm_input_features(targets, tokenizer_llm,
-                                                    max_gen_len, add_bos_token, add_eos_token)
+            input_ids_m2m, attention_mask_m2m = mt_input_features(
+                sources, tokenizer_m2m, max_seq_len, source_languages, langs_map
+            )
+            labels, mask_label = llm_input_features(
+                targets, tokenizer_llm, max_gen_len, add_bos_token=False, add_eos_token=True
+            )
 
             input_ids_prompt, mask_prompt = None, None
             if augmentation:
-                add_bos_token = False
-                add_eos_token = False
-                input_ids_prompt, mask_prompt = llm_input_features(prompts, tokenizer_llm,
-                                                                   max_gen_len, add_bos_token,
-                                                                   add_eos_token)
+                input_ids_prompt, mask_prompt = llm_input_features(
+                    prompts, tokenizer_llm, max_gen_len, add_bos_token=False, add_eos_token=False
+                )
 
-            loss = model(input_ids_m2m, attention_mask_m2m,
-                         input_ids_prompt=input_ids_prompt, mask_prompt=mask_prompt,
-                         labels=labels, mask_label=mask_label)
+            loss = model(
+                input_ids_m2m, attention_mask_m2m,
+                input_ids_prompt=input_ids_prompt, mask_prompt=mask_prompt,
+                labels=labels, mask_label=mask_label,
+            )
             loss = loss.mean()
             tr_loss += loss.item()
             nb_tr_steps += 1
             model.backward(loss)
             model.step()
 
-            loss_show = ' Epoch:' + str(epoch) + " loss:" + str(round(tr_loss / nb_tr_steps, 4)) #+ f" lr:{'%.2E' % scheduler.get_last_lr()[0]}"
-            step_trange.set_postfix_str(loss_show)
+            avg_loss = tr_loss / nb_tr_steps
+            step_trange.set_postfix_str(f"Epoch:{epoch} loss:{avg_loss:.4f}")
             global_step += 1
             if use_wandb:
                 wandb.log({
-                    'train/loss': tr_loss / nb_tr_steps,
-                    'train/epoch': epoch,
-                    'train/global_step': global_step
+                    "train/loss": avg_loss,
+                    "train/epoch": epoch,
+                    "train/global_step": global_step,
                 })
 
             if step_count % eval_step == 0 and step_count > 0:
-                perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
-                                          max_seq_len, max_gen_len, langs_map, augmentation)
-                print('ppl:', perplexity)
+                perplexity = evaluate_ppl(
+                    model, val_loader, tokenizer_llm, tokenizer_m2m,
+                    max_seq_len, max_gen_len, langs_map, augmentation,
+                )
+                logger.info("Step %d | val_ppl=%.4f", global_step, perplexity)
                 if use_wandb:
-                    wandb.log({'eval/perplexity': perplexity, 'train/global_step': global_step})
+                    wandb.log({"eval/perplexity": perplexity, "train/global_step": global_step})
                 if global_rank == 0 and perplexity < best_perplexity:
                     best_perplexity = perplexity
                     save_model(output_model_path_base, model.mapping)
-                    print('save new best')
+                    logger.info("New best checkpoint saved (ppl=%.4f)", best_perplexity)
             step_count += 1
 
-
-
-        perplexity = evaluate_ppl(model, val_set, tokenizer_llm, tokenizer_m2m,
-                                  max_seq_len, max_gen_len, langs_map, augmentation)
-        print('ppl:', perplexity)
+        perplexity = evaluate_ppl(
+            model, val_loader, tokenizer_llm, tokenizer_m2m,
+            max_seq_len, max_gen_len, langs_map, augmentation,
+        )
+        logger.info("Epoch %d complete | val_ppl=%.4f", epoch, perplexity)
         if use_wandb:
-            wandb.log({'eval/perplexity': perplexity, 'train/epoch': epoch + 1, 'train/global_step': global_step})
+            wandb.log({
+                "eval/perplexity": perplexity,
+                "train/epoch": epoch + 1,
+                "train/global_step": global_step,
+            })
         if global_rank == 0 and perplexity < best_perplexity:
             best_perplexity = perplexity
             save_model(output_model_path_base, model.mapping)
-            print('save new best')
+            logger.info("New best checkpoint saved (ppl=%.4f)", best_perplexity)
+
     if use_wandb:
         wandb.finish()
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Stage 1: train the MindMerger mapping layer.")
+    parser.add_argument("--llm_path", type=str, default="../LLMs/Llama-2-7b-hf/")
+    parser.add_argument("--mt_path", type=str, default="../LLMs/mt5-xl/")
+    parser.add_argument("--save_name", type=str, default="MindMerger")
+    parser.add_argument("--task", type=str, default="translation")
+    parser.add_argument("--stage_name", type=str, default="mapping")
+    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--epoch_num", type=int, default=3)
+    parser.add_argument("--train_num", type=int, default=100000)
+    parser.add_argument("--train_batch_size", type=int, default=24)
+    parser.add_argument("--train_micro_batch_size_per_gpu", type=int, default=1)
+    parser.add_argument("--eval_batch_size", type=int, default=2)
+    parser.add_argument("--max_seq_len", type=int, default=512)
+    parser.add_argument("--max_gen_len", type=int, default=512)
+    parser.add_argument("--val_size", type=int, default=3000)
+    parser.add_argument("--init_checkpoint", type=str, default=None)
+    parser.add_argument("--gpu", type=str, default="0")
+    parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--augmentation", type=ast.literal_eval, default=False)
+    parser.add_argument("--nllb_data_dir", type=str, default="./data/nllb")
     parser.add_argument(
-        "--llm_path",
-        type=str,
-        default='../LLMs/Llama-2-7b-hf/'
+        "--nllb_languages", type=str, default="French",
+        help="Comma-separated source languages for task nllb_corpus.",
     )
-    parser.add_argument(
-        "--mt_path",
-        type=str,
-        default='../LLMs/mt5-xl/'
-    )
-    parser.add_argument(
-        "--save_name",
-        type=str,
-        default='MindMerger'
-    )
-    parser.add_argument(
-        "--task",
-        type=str,
-        default='translation'
-    )
-    parser.add_argument(
-        "--stage_name",
-        type=str,
-        default='mapping'
-    )
-    parser.add_argument(
-        "--lr",
-        type=float,
-        default=2e-5
-    )
-    parser.add_argument(
-        "--epoch_num",
-        type=int,
-        default=3
-    )
-    parser.add_argument(
-        "--train_num",
-        type=int,
-        default=100000
-    )
-    parser.add_argument(
-        "--train_batch_size",
-        type=int,
-        default=24
-    )
-    parser.add_argument(
-        "--train_micro_batch_size_per_gpu",
-        type=int,
-        default=1
-    )
-    parser.add_argument(
-        "--eval_batch_size",
-        type=int,
-        default=2
-    )
-    parser.add_argument(
-        "--max_seq_len",
-        type=int,
-        default=512
-    )
-    parser.add_argument(
-        "--max_gen_len",
-        type=int,
-        default=512
-    )
-    parser.add_argument(
-        "--val_size",
-        type=int,
-        default=3000
-    )
-    parser.add_argument(
-        "--init_checkpoint",
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        "--gpu",
-        type=str,
-        default='0'
-    )
-    parser.add_argument(
-        "--local_rank",
-        type=int,
-        default=0
-    )
-    parser.add_argument(
-        "--augmentation",
-        type=ast.literal_eval,
-        default=False
-    )
-    parser.add_argument(
-        "--nllb_data_dir",
-        type=str,
-        default='./data/nllb'
-    )
-    parser.add_argument(
-        "--nllb_languages",
-        type=str,
-        default="French",
-        help="For task nllb_corpus: comma-separated source languages (must match JSONL files from load_nllb_corpus.py).",
-    )
-    parser.add_argument(
-        "--use_wandb",
-        type=ast.literal_eval,
-        default=False
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default='mindmerger-stage1'
-    )
-    parser.add_argument(
-        "--wandb_run_name",
-        type=str,
-        default=''
-    )
-    parser.add_argument(
-        "--wandb_mode",
-        type=str,
-        default='auto'
-    )
-    parser.add_argument(
-        "--wandb_init_timeout",
-        type=int,
-        default=90
-    )
+    parser.add_argument("--use_wandb", type=ast.literal_eval, default=False)
+    parser.add_argument("--wandb_project", type=str, default="mindmerger-stage1")
+    parser.add_argument("--wandb_run_name", type=str, default="")
+    parser.add_argument("--wandb_mode", type=str, default="auto")
+    parser.add_argument("--wandb_init_timeout", type=int, default=90)
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     set_seed(0)
 
-    langs = ['Thai', 'Swahili', 'Bengali', 'Chinese', 'German', 'Spanish', 'French', 'Japanese', 'Russian', 'English']
-    langs_map_flores = {'Swahili': 'swh', 'Benli': 'ben', 'English': 'eng', 'Thai': 'tha', 'Chinese': 'zho_simpl',
-                        'German': 'deu', 'Spanish': 'spa', 'French': 'fra', 'Japanese': 'jpn', 'Russian': 'rus', }
-
-    langs_map_m2m = {'English': 'en', 'Swahili': 'sw', 'Chinese': 'zh', 'Bengali': 'bn',
-     'German': 'de', 'Spanish': 'es', 'French': 'fr', 'Japanese': 'ja',
-     'Russian': 'ru', 'Thai': 'th', 'Greek': 'el', 'Telugu': 'te',
-     'Arabic': 'ar', 'Bulgarian': 'bg', 'Croatian': 'hr', 'Hungarian': 'hu',
-     'Italian': 'it', 'Lithuanian': 'lt', 'Macedonian': 'mk', 'Polish': 'pl',
-     'Portuguese': 'pt', 'Albanian': 'sq', 'Serbian': 'sr', 'Turkish': 'tr',
-     'Vietnamese': 'vi', 'Hindi': 'hi', 'Flemish': 'nl', 'Urdu': 'ur'}
+    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
 
     langs_map_nllb = {
         "Swahili": "swh_Latn",
@@ -506,9 +486,16 @@ if __name__ == "__main__":
         "Wolof": "wol_Latn",
         "French": "fra_Latn",
     }
+    langs_map_m2m = {
+        "English": "en", "Swahili": "sw", "Chinese": "zh", "Bengali": "bn",
+        "German": "de", "Spanish": "es", "French": "fr", "Japanese": "ja",
+        "Russian": "ru", "Thai": "th", "Greek": "el", "Telugu": "te",
+        "Arabic": "ar", "Bulgarian": "bg", "Croatian": "hr", "Hungarian": "hu",
+        "Italian": "it", "Lithuanian": "lt", "Macedonian": "mk", "Polish": "pl",
+        "Portuguese": "pt", "Albanian": "sq", "Serbian": "sr", "Turkish": "tr",
+        "Vietnamese": "vi", "Hindi": "hi", "Flemish": "nl", "Urdu": "ur",
+    }
 
-    if 'nllb' in args.mt_path:
-        langs_map = langs_map_nllb
-    else:
-        langs_map = langs_map_m2m
-    main(args)
+    langs_map = langs_map_nllb if "nllb" in args.mt_path else langs_map_m2m
+
+    main(args, logger)

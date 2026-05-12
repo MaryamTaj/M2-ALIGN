@@ -1,10 +1,13 @@
+"""Stage 2 augmentation training for AugmentedMindMerger."""
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import os
 import random
+from datetime import datetime
 from typing import Iterable
 
 import torch
@@ -29,22 +32,75 @@ NLLB_LANG_MAP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def setup_logging(log_dir: str) -> logging.Logger:
+    """Create a logger that writes to stdout and a timestamped file in *log_dir*.
+
+    Args:
+        log_dir: Directory in which to create the log file (created if absent).
+
+    Returns:
+        A configured :class:`logging.Logger` instance.
+    """
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = os.path.join(log_dir, f"augmentation_{timestamp}.log")
+
+    logger = logging.getLogger("stage2_augmentation")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+
+    return logger
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
 def set_seed(seed: int) -> None:
+    """Set random seeds for Python and PyTorch for reproducibility.
+
+    Args:
+        seed: Integer seed value applied to :mod:`random`,
+            ``torch.manual_seed``, and all CUDA devices.
+    """
     random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
 
 def read_jsonl(path: str) -> list[dict]:
+    """Read a JSONL file and return its rows as a list of dicts.
+
+    Tolerates a leading BOM character and stray non-JSON prefixes before
+    the opening ``{`` on a line.
+
+    Args:
+        path: Path to the ``.jsonl`` file.
+
+    Returns:
+        A list of parsed JSON objects.
+
+    Raises:
+        ValueError: If any line cannot be parsed as JSON.
+    """
     rows = []
     with open(path, "r", encoding="utf-8") as f:
         for lineno, raw_line in enumerate(f, 1):
-            line = raw_line.strip().lstrip("\ufeff")
+            line = raw_line.strip().lstrip("﻿")
             if not line:
                 continue
-            # Tolerate a stray non-JSON prefix before the first '{' (e.g. accidental
-            # text inserted at the very start of a file). We only trim if a '{' is
-            # actually present; otherwise we surface a precise error.
             if not line.startswith("{"):
                 brace = line.find("{")
                 if brace > 0:
@@ -64,13 +120,28 @@ def read_jsonl(path: str) -> list[dict]:
 
 
 class Stage2Dataset(Dataset):
-    def __init__(self, rows: list[dict]):
+    """Minimal PyTorch Dataset wrapper around a list of sample dicts.
+
+    Args:
+        rows: List of dicts, each with at least ``"query"``, ``"answer"``,
+            and optionally ``"source_language"`` keys.
+    """
+
+    def __init__(self, rows: list[dict]) -> None:
         self.rows = rows
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.rows)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
+        """Return the sample at index *idx*.
+
+        Args:
+            idx: Integer index into the dataset.
+
+        Returns:
+            The raw sample dict at position *idx*.
+        """
         return self.rows[idx]
 
 
@@ -80,7 +151,25 @@ def mt_input_features(
     tokenizer_mt: NllbTokenizer,
     max_seq_len: int,
     device: torch.device,
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Tokenise source-language texts with the NLLB tokenizer.
+
+    Sets ``tokenizer_mt.src_lang`` per example and right-pads the batch
+    to the length of the longest sequence.
+
+    Args:
+        texts: Source-language strings to tokenize, one per example.
+        langs: Human-readable language names parallel to *texts*
+            (must be keys in :data:`NLLB_LANG_MAP`).
+        tokenizer_mt: An instantiated :class:`NllbTokenizer`.
+        max_seq_len: Maximum sequence length; longer sequences are
+            right-truncated.
+        device: Target device for the returned tensors.
+
+    Returns:
+        A 2-tuple ``(input_ids, attention_mask)`` of shape
+        ``[batch, seq_len]`` on *device*.
+    """
     ids, masks = [], []
     for text, lang in zip(texts, langs):
         tokenizer_mt.src_lang = NLLB_LANG_MAP[lang]
@@ -95,7 +184,10 @@ def mt_input_features(
             ids[i].append(pad_id)
             masks[i].append(0)
 
-    return torch.tensor(ids, dtype=torch.long, device=device), torch.tensor(masks, dtype=torch.long, device=device)
+    return (
+        torch.tensor(ids, dtype=torch.long, device=device),
+        torch.tensor(masks, dtype=torch.long, device=device),
+    )
 
 
 def llm_input_features(
@@ -105,7 +197,23 @@ def llm_input_features(
     add_bos: bool,
     add_eos: bool,
     device: torch.device,
-):
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Tokenise texts with the LLM tokenizer.
+
+    Controls BOS/EOS insertion and moves the result to *device*.
+
+    Args:
+        texts: Strings to tokenize.
+        tokenizer_llm: An instantiated LLM tokenizer (e.g. Qwen3-VL).
+        max_seq_len: Maximum sequence length; longer sequences are
+            right-truncated.
+        add_bos: Whether to prepend a BOS token.
+        add_eos: Whether to append an EOS token.
+        device: Target device for the returned tensors.
+
+    Returns:
+        A 2-tuple ``(input_ids, attention_mask)`` on *device*.
+    """
     tokenizer_llm.add_bos_token = add_bos
     tokenizer_llm.add_eos_token = add_eos
     enc = tokenizer_llm(
@@ -118,7 +226,16 @@ def llm_input_features(
     return enc["input_ids"].to(device), enc["attention_mask"].to(device)
 
 
-def collate_batch(batch):
+def collate_batch(batch: list[dict]) -> dict[str, list]:
+    """Collate a list of sample dicts into a batched dict.
+
+    Args:
+        batch: List of sample dicts from :class:`Stage2Dataset`.
+
+    Returns:
+        A dict with keys ``"query"``, ``"answer"``, and
+        ``"source_language"``, each mapping to a list of strings.
+    """
     return {
         "query": [x["query"] for x in batch],
         "answer": [x["answer"] for x in batch],
@@ -126,19 +243,37 @@ def collate_batch(batch):
     }
 
 
-def save_mapping_checkpoint(path: str, model: AugmentedMindMerger, step: int, loss: float):
+def save_mapping_checkpoint(path: str, model: AugmentedMindMerger, step: int, loss: float) -> None:
+    """Save the mapping layer's state dict to *path*.
+
+    Creates parent directories as needed.  The checkpoint includes the
+    training step and validation loss alongside the state dict so that
+    the best checkpoint can be identified after training.
+
+    Args:
+        path: Full file path for the checkpoint (e.g.
+            ``"outputs/augmentation/mapping/pytorch_model.bin"``).
+        model: The :class:`AugmentedMindMerger` whose mapping to save.
+        step: Global training step at which the checkpoint was saved.
+        loss: Validation loss at this checkpoint.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save(
-        {
-            "step": step,
-            "loss": loss,
-            "model_state_dict": model.mapping.state_dict(),
-        },
+        {"step": step, "loss": loss, "model_state_dict": model.mapping.state_dict()},
         path,
     )
 
 
+# ---------------------------------------------------------------------------
+# W&B helpers
+# ---------------------------------------------------------------------------
+
 def _load_wandb_key_from_tokens() -> bool:
+    """Load WANDB_API_KEY from a ``.tokens`` file if present.
+
+    Returns:
+        ``True`` if a key was found and set, ``False`` otherwise.
+    """
     for candidate in (
         os.path.join(os.getcwd(), ".tokens"),
         os.path.join(os.path.dirname(os.getcwd()), ".tokens"),
@@ -151,7 +286,7 @@ def _load_wandb_key_from_tokens() -> bool:
                 if not line or line.startswith("#"):
                     continue
                 if line.startswith("export "):
-                    line = line[len("export ") :].strip()
+                    line = line[len("export "):].strip()
                 if "=" not in line:
                     continue
                 key, value = line.split("=", 1)
@@ -165,6 +300,15 @@ def _load_wandb_key_from_tokens() -> bool:
 
 
 def _init_wandb_or_disable(args, config: dict) -> bool:
+    """Initialise Weights & Biases with online/offline fallback.
+
+    Args:
+        args: Parsed argument namespace with W&B-related attributes.
+        config: Hyperparameter dict to log to the W&B run.
+
+    Returns:
+        ``True`` if W&B was initialised successfully, ``False`` otherwise.
+    """
     if not args.use_wandb:
         return False
     if wandb is None:
@@ -178,7 +322,6 @@ def _init_wandb_or_disable(args, config: dict) -> bool:
 
     if mode in {"auto", "online"} and not os.environ.get("WANDB_API_KEY"):
         _load_wandb_key_from_tokens()
-
     if mode == "offline":
         os.environ["WANDB_MODE"] = "offline"
     elif mode == "auto" and not os.environ.get("WANDB_API_KEY"):
@@ -214,7 +357,21 @@ def _init_wandb_or_disable(args, config: dict) -> bool:
         return False
 
 
-def main(args):
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+
+def main(args, logger: logging.Logger) -> None:
+    """Run the Stage 2 augmentation training loop.
+
+    Loads English and optionally translated task-specialization data,
+    builds an :class:`AugmentedMindMerger`, initialises its mapping from
+    a Stage 1 checkpoint, and trains with validation-based checkpointing.
+
+    Args:
+        args: Parsed argument namespace.
+        logger: Logger for training progress and checkpoint messages.
+    """
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
@@ -228,26 +385,23 @@ def main(args):
     split_idx = int(len(rows) * (1.0 - args.val_ratio))
     train_rows = rows[:split_idx]
     val_rows = rows[split_idx:]
+    logger.info("Dataset split: train=%d, val=%d", len(train_rows), len(val_rows))
 
-    print(json.dumps({"train_size": len(train_rows), "val_size": len(val_rows)}, indent=2))
-    use_wandb = _init_wandb_or_disable(
-        args,
-        {
-            "stage": "stage2_augmentation",
-            "mt_path": args.mt_path,
-            "llm_path": args.llm_path,
-            "train_size": len(train_rows),
-            "val_size": len(val_rows),
-            "lr": args.lr,
-            "epochs": args.epochs,
-            "train_batch_size": args.train_batch_size,
-            "eval_batch_size": args.eval_batch_size,
-            "grad_accum": args.grad_accum,
-            "max_seq_len": args.max_seq_len,
-            "max_gen_len": args.max_gen_len,
-            "val_ratio": args.val_ratio,
-        },
-    )
+    use_wandb = _init_wandb_or_disable(args, {
+        "stage": "stage2_augmentation",
+        "mt_path": args.mt_path,
+        "llm_path": args.llm_path,
+        "train_size": len(train_rows),
+        "val_size": len(val_rows),
+        "lr": args.lr,
+        "epochs": args.epochs,
+        "train_batch_size": args.train_batch_size,
+        "eval_batch_size": args.eval_batch_size,
+        "grad_accum": args.grad_accum,
+        "max_seq_len": args.max_seq_len,
+        "max_gen_len": args.max_gen_len,
+        "val_ratio": args.val_ratio,
+    })
 
     tokenizer_mt = NllbTokenizer.from_pretrained(args.mt_path)
     tokenizer_llm = AutoTokenizer.from_pretrained(args.llm_path, use_fast=False)
@@ -267,9 +421,11 @@ def main(args):
     if args.stage1_mapping_ckpt:
         ckpt = torch.load(args.stage1_mapping_ckpt, map_location="cpu")
         model.mapping.load_state_dict(ckpt["model_state_dict"], strict=False)
-        print(f"Loaded Stage1 mapping: {args.stage1_mapping_ckpt}")
+        logger.info("Loaded Stage 1 mapping: %s", args.stage1_mapping_ckpt)
 
-    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr
+    )
 
     train_loader = DataLoader(
         Stage2Dataset(train_rows),
@@ -315,26 +471,23 @@ def main(args):
                 labels=labels,
                 mask_label=mask_label,
             )
-            loss = loss / args.grad_accum
-            loss.backward()
+            (loss / args.grad_accum).backward()
 
             if (global_step + 1) % args.grad_accum == 0:
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
             global_step += 1
-            running += loss.item() * args.grad_accum
+            running += loss.item()
             steps += 1
-            train_loss = running / max(steps, 1)
+            train_loss = running / steps
             pbar.set_postfix(loss=f"{train_loss:.4f}")
             if use_wandb:
-                wandb.log(
-                    {
-                        "train/loss": train_loss,
-                        "train/epoch": epoch,
-                        "train/global_step": global_step,
-                    }
-                )
+                wandb.log({
+                    "train/loss": train_loss,
+                    "train/epoch": epoch,
+                    "train/global_step": global_step,
+                })
 
         model.eval()
         val_loss = 0.0
@@ -368,36 +521,39 @@ def main(args):
 
         val_loss = val_loss / max(1, val_steps)
         val_ppl = math.exp(min(20.0, val_loss))
-        print(f"[epoch={epoch}] val_loss={val_loss:.4f}, val_ppl={val_ppl:.4f}")
+        logger.info("Epoch %d | val_loss=%.4f | val_ppl=%.4f", epoch, val_loss, val_ppl)
         if use_wandb:
-            wandb.log(
-                {
-                    "eval/loss": val_loss,
-                    "eval/perplexity": val_ppl,
-                    "eval/epoch": epoch,
-                    "train/global_step": global_step,
-                }
-            )
+            wandb.log({
+                "eval/loss": val_loss,
+                "eval/perplexity": val_ppl,
+                "eval/epoch": epoch,
+                "train/global_step": global_step,
+            })
 
         if val_loss < best_val:
             best_val = val_loss
-            save_mapping_checkpoint(
-                os.path.join(args.output_dir, "mapping", "pytorch_model.bin"),
-                model,
-                global_step,
-                val_loss,
-            )
-            print(f"Saved best checkpoint (val_loss={val_loss:.4f})")
+            ckpt_path = os.path.join(args.output_dir, "mapping", "pytorch_model.bin")
+            save_mapping_checkpoint(ckpt_path, model, global_step, val_loss)
+            logger.info("Saved best checkpoint (val_loss=%.4f) to %s", val_loss, ckpt_path)
+
     if use_wandb:
         wandb.finish()
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--stage1-mapping-ckpt", type=str, required=True)
-    parser.add_argument("--english-data", type=str, required=True)
-    parser.add_argument("--translated-data", type=str, default="")
-    parser.add_argument("--output-dir", type=str, required=True)
+    parser = argparse.ArgumentParser(description="Stage 2: train the augmented mapping layer.")
+    parser.add_argument("--stage1-mapping-ckpt", type=str, required=True,
+                        help="Path to the Stage 1 pytorch_model.bin checkpoint.")
+    parser.add_argument("--english-data", type=str, required=True,
+                        help="Path to task_specialization_en.jsonl.")
+    parser.add_argument("--translated-data", type=str, default="",
+                        help="Optional path to task_specialization_translated.jsonl.")
+    parser.add_argument("--output-dir", type=str, required=True,
+                        help="Directory in which to save checkpoints.")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-3.3B")
     parser.add_argument("--llm-path", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--local-files-only", action="store_true")
@@ -418,4 +574,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    main(args)
+    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    main(args, logger)
