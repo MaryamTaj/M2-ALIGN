@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage2_aug
+#SBATCH --job-name=stage2_train_LRL
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=training_stage2_aug_%j.log
+#SBATCH --output=stage2_train_LRL_%j.log
 
 set -euo pipefail
 
@@ -22,8 +22,7 @@ MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin"
 
 EN_DATA="$STAGE2/data/task_specialization_en.jsonl"
-# French-only augmented rows (generate with Stage2/build_query_translation_data.py --target-languages fr).
-TRANSLATED_DATA="$STAGE2/data/task_specialization_translated_fr.jsonl"
+TRANSLATED_DATA="$STAGE2/data/task_specialization_translated.jsonl"
 OUTPUT_DIR="$STAGE2/outputs/augmentation"
 
 if [ -d "$MT_PATH" ]; then

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage2_eval
+#SBATCH --job-name=stage2_evaluate_LRL
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=evaluating_stage2_aug_%j.log
+#SBATCH --output=stage2_evaluate_LRL_%j.log
 
 set -euo pipefail
 
@@ -80,22 +80,12 @@ if [ ! -f "$MAPPING_CKPT" ]; then
   exit 1
 fi
 
-echo "=== Cached MMLU-ProX check (fr) ==="
-python - <<'PY'
-from datasets import load_dataset
-for lang in ["fr"]:
-    load_dataset("li-lab/MMLU-ProX", lang, split="validation", download_mode="reuse_dataset_if_exists")
-    load_dataset("li-lab/MMLU-ProX", lang, split="test", download_mode="reuse_dataset_if_exists")
-print("MMLU-ProX cache OK.")
-PY
-
-echo "=== Run post-augmentation MMLU-ProX eval (Stage 2: BOS + X_m + boundary + T) ==="
 cd "$STAGE2"
 python -u evaluate.py \
   --llm-path "$LLM_PATH" \
   --mt-path "$MT_PATH" \
   --mapping-ckpt "$MAPPING_CKPT" \
-  --langs fr \
+  --langs Swahili,Yoruba,Wolof \
   --max-seq-len 256 \
   --max-llm-seq-len 4096 \
   --max-gen-len 256 \

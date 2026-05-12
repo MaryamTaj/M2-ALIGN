@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=training_nllb
+#SBATCH --job-name=stage1_train_LRL
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=training_nllb_%j.log
+#SBATCH --output=stage1_train_LRL_%j.log
 
 set -euo pipefail
 
@@ -79,9 +79,7 @@ else
 fi
 echo
 
-echo "=== Start Stage1 NLLB mapping training (French source) ==="
-echo "If ./data/nllb/French_to_English.jsonl is missing, run from Stage1:"
-echo "  python load_nllb_corpus.py --languages French --samples_per_language 3000 --output_dir ./data/nllb"
+
 cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 deepspeed --master_port 50002 train.py --deepspeed \
   --llm_path "$LLM_PATH" \
@@ -90,7 +88,7 @@ deepspeed --master_port 50002 train.py --deepspeed \
   --task nllb_corpus \
   --augmentation False \
   --nllb_data_dir ./data/nllb \
-  --nllb_languages French \
+  --nllb_languages Swahili,Yoruba,Wolof \
   --train_num 3000 \
   --val_size 900 \
   --train_batch_size 24 \
