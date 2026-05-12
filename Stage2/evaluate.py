@@ -34,7 +34,7 @@ from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, NllbTokenizer
 
-from modeling_augmentation import AugmentedMindMerger
+from model import AugmentedMindMerger
 
 
 TEMPERATURE = 1.0

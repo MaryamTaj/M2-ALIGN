@@ -16,8 +16,8 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import AutoTokenizer, NllbTokenizer
 
-from evaluation import evaluate_ppl
-from modeling_mindmerger import MindMerger
+from evaluate import evaluate_ppl
+from model import MindMerger
 from tools.deepspeed_config import get_train_ds_config
 from tools.input_features import llm_input_features, mt_input_features
 from tools.read_datasets import MathDataset, read_lego, read_math_train, read_nllb, read_x_csqa_train, read_xnli_train

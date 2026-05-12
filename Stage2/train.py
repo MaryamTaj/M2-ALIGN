@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, NllbTokenizer
 
-from modeling_augmentation import AugmentedMindMerger
+from model import AugmentedMindMerger
 
 try:
     import wandb
@@ -334,6 +334,7 @@ def _init_wandb_or_disable(args, config: dict) -> bool:
             project=args.wandb_project,
             name=args.wandb_run_name if args.wandb_run_name else None,
             config=config,
+            dir=os.path.dirname(os.path.abspath(__file__)),
             settings=wandb.Settings(init_timeout=args.wandb_init_timeout),
         )
         print(f"Initialized Weights & Biases (mode={os.environ.get('WANDB_MODE', 'online')}).")

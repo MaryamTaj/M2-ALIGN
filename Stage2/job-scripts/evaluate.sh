@@ -91,7 +91,7 @@ PY
 
 echo "=== Run post-augmentation MMLU-ProX eval (Stage 2: BOS + X_m + boundary + T) ==="
 cd "$STAGE2"
-python -u run_evaluating.py \
+python -u evaluate.py \
   --llm-path "$LLM_PATH" \
   --mt-path "$MT_PATH" \
   --mapping-ckpt "$MAPPING_CKPT" \

@@ -101,7 +101,7 @@ fi
 
 echo "=== Start Stage2 augmentation training ==="
 cd "$PROJECT_ROOT"
-python -u Stage2/run_augmentation.py \
+python -u Stage2/train.py \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --english-data "$EN_DATA" \
   --translated-data "$TRANSLATED_DATA" \
