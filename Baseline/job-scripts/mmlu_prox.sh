@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=baseline_eval_%j.log
+#SBATCH --output=$HOME/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_eval_%j.log
 
 set -euo pipefail
 

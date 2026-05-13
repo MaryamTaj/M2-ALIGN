@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=stage1_train_LRL_%j.log
+#SBATCH --output=$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1/logs/stage1_train_LRL_%j.log
 
 set -euo pipefail
 
