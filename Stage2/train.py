@@ -457,8 +457,16 @@ def main(args, logger: logging.Logger) -> None:
             input_ids_mt, mask_mt = mt_input_features(
                 query, source_lang, tokenizer_mt, args.max_seq_len, device
             )
+            formatted_query = [
+                tokenizer_llm.apply_chat_template(
+                    [{"role": "user", "content": q}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                for q in query
+            ]
             input_ids_query_llm, mask_query_llm = llm_input_features(
-                query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
+                formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
             )
             labels, mask_label = llm_input_features(
                 answer, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device
@@ -502,8 +510,16 @@ def main(args, logger: logging.Logger) -> None:
                 input_ids_mt, mask_mt = mt_input_features(
                     query, source_lang, tokenizer_mt, args.max_seq_len, device
                 )
+                formatted_query = [
+                    tokenizer_llm.apply_chat_template(
+                        [{"role": "user", "content": q}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for q in query
+                ]
                 input_ids_query_llm, mask_query_llm = llm_input_features(
-                    query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
+                    formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
                 )
                 labels, mask_label = llm_input_features(
                     answer, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device

@@ -331,8 +331,13 @@ def pick_choice(
     input_ids_mt, mask_mt = mt_input_features(
         [nllb_text], [source_language], tokenizer_mt, max_mt_seq_len, device
     )
+    formatted_prompt = tokenizer_llm.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        tokenize=False,
+        add_generation_prompt=True,
+    )
     input_ids_query_llm, mask_query_llm = llm_input_features(
-        [prompt], tokenizer_llm, max_llm_seq_len, add_bos=False, add_eos=False, device=device
+        [formatted_prompt], tokenizer_llm, max_llm_seq_len, add_bos=False, add_eos=False, device=device
     )
     gen_kw = dict(
         do_sample=True,
