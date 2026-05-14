@@ -214,7 +214,6 @@ def main(args, logger: logging.Logger) -> None:
     task = args.task
     augmentation = args.augmentation
     save_name = args.save_name
-    result_path_base = f"./results/{save_name}/{task}/{stage_name}/"
     output_model_path_base = f"./outputs/{save_name}/{task}/{stage_name}/"
 
     languages: list[str]
@@ -261,7 +260,6 @@ def main(args, logger: logging.Logger) -> None:
     ds_config = get_train_ds_config(train_batch_size, train_micro_batch_size_per_gpu, lr, gradient_accumulation)
 
     os.makedirs(output_model_path_base, exist_ok=True)
-    os.makedirs(result_path_base, exist_ok=True)
 
     if "nllb-200" in mt_path or "nllb" in mt_path:
         tokenizer_m2m = NllbTokenizer.from_pretrained(mt_path)
@@ -288,7 +286,6 @@ def main(args, logger: logging.Logger) -> None:
         "max_seq_len": max_seq_len,
         "max_gen_len": max_gen_len,
         "train_batch_size": train_batch_size,
-        "result_path": result_path_base,
         "output_model_path": output_model_path_base,
         "languages": languages,
     }
