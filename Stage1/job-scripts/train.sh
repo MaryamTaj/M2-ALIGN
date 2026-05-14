@@ -89,11 +89,11 @@ deepspeed --master_port 50002 train.py --deepspeed \
   --augmentation False \
   --nllb_data_dir ./data/nllb \
   --nllb_languages Swahili,Yoruba,Wolof \
-  --train_num 3000 \
+  --train_num 9000 \
   --val_size 900 \
   --train_batch_size 24 \
   --train_micro_batch_size_per_gpu 1 \
-  --epoch_num 3 \
+  --epoch_num 1 \
   --max_seq_len 256 \
   --max_gen_len 256 \
   --eval_batch_size 2 \

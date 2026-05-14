@@ -409,6 +409,7 @@ def main(args, logger: logging.Logger) -> None:
     if tokenizer_llm.pad_token is None:
         tokenizer_llm.pad_token = tokenizer_llm.eos_token
     tokenizer_llm.padding_side = "left"
+    tokenizer_llm.truncation_side = "left"
 
     model = AugmentedMindMerger(
         mt_path=args.mt_path,
@@ -468,8 +469,16 @@ def main(args, logger: logging.Logger) -> None:
             input_ids_query_llm, mask_query_llm = llm_input_features(
                 formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
             )
+            label_texts = [
+                tokenizer_llm.apply_chat_template(
+                    [{"role": "user", "content": q}, {"role": "assistant", "content": a}],
+                    tokenize=False,
+                    add_generation_prompt=False,
+                )[len(fq):]
+                for q, a, fq in zip(query, answer, formatted_query)
+            ]
             labels, mask_label = llm_input_features(
-                answer, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device
+                label_texts, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=False, device=device
             )
 
             loss = model(
@@ -521,8 +530,16 @@ def main(args, logger: logging.Logger) -> None:
                 input_ids_query_llm, mask_query_llm = llm_input_features(
                     formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device
                 )
+                label_texts = [
+                    tokenizer_llm.apply_chat_template(
+                        [{"role": "user", "content": q}, {"role": "assistant", "content": a}],
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )[len(fq):]
+                    for q, a, fq in zip(query, answer, formatted_query)
+                ]
                 labels, mask_label = llm_input_features(
-                    answer, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device
+                    label_texts, tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=False, device=device
                 )
 
                 loss = model(

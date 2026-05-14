@@ -104,7 +104,7 @@ def main() -> None:
                         help="Directory in which to write the JSONL output files.")
     parser.add_argument("--split", type=str, default="train",
                         help="Dataset split to download (e.g. 'train').")
-    parser.add_argument("--samples_per_language", type=int, default=3000,
+    parser.add_argument("--samples_per_language", type=int, default=9000,
                         help="Maximum number of sentence pairs to save per language.")
     parser.add_argument(
         "--languages", type=str, default="French",
