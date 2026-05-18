@@ -546,7 +546,7 @@ def evaluate(
 
 
 def _peek_training_data(logger: logging.Logger) -> None:
-    """Log the first 5 rows of task_specialization_en.jsonl at DEBUG level.
+    """Log the first row of each training JSONL file in Stage2/data/ at DEBUG level.
 
     Useful for diagnosing label-format mismatches between training data
     and the MCQ evaluation format.
@@ -554,30 +554,35 @@ def _peek_training_data(logger: logging.Logger) -> None:
     Args:
         logger: Logger to which debug lines are written.
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    peek_path = os.path.join(script_dir, "data", "task_specialization_en.jsonl")
-    if not os.path.isfile(peek_path):
+    import glob
+    data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    jsonl_files = sorted(glob.glob(os.path.join(data_dir, "*.jsonl")))
+    if not jsonl_files:
+        logger.debug("_peek_training_data: no .jsonl files found in %s", data_dir)
         return
-    try:
-        with open(peek_path, "r", encoding="utf-8") as f:
-            for i, raw in enumerate(f):
-                if i >= 5:
+    for path in jsonl_files:
+        fname = os.path.basename(path)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip().lstrip("﻿")
+                    if not raw:
+                        continue
+                    try:
+                        row = json.loads(raw)
+                        logger.debug(
+                            "%s: query_head=%r answer=%r source_language=%s source_dataset=%s",
+                            fname,
+                            (row.get("query") or "")[:100],
+                            (row.get("answer") or "")[:60],
+                            row.get("source_language"),
+                            row.get("source_dataset"),
+                        )
+                    except Exception:
+                        logger.debug("%s: parse error, raw=%r", fname, raw[:100])
                     break
-                raw = raw.strip().lstrip("﻿")
-                if not raw:
-                    continue
-                try:
-                    row = json.loads(raw)
-                    logger.debug(
-                        "task_specialization_en[%d]: query_head=%r answer=%r source_dataset=%s",
-                        i, (row.get("query") or "")[:100],
-                        (row.get("answer") or "")[:100],
-                        row.get("source_dataset"),
-                    )
-                except Exception:
-                    logger.debug("task_specialization_en[%d]: parse error, raw=%r", i, raw[:100])
-    except Exception as exc:
-        logger.debug("Could not peek at training data: %s", exc)
+        except Exception as exc:
+            logger.debug("Could not peek at %s: %s", fname, exc)
 
 
 def normalize_lang_args(langs_csv: str) -> list[str]:

@@ -1,28 +1,27 @@
 #!/bin/bash
-#SBATCH --job-name=stage2_translate
+#SBATCH --job-name=stage2_load_data
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=12:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/build_query_translation_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_load_data_%j.log
 
 set -euo pipefail
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 STAGE2="$PROJECT_ROOT/Stage2"
 
-INPUT_PATH="$STAGE2/data/task_specialization_en.jsonl"
-OUTPUT_PATH="$STAGE2/data/task_specialization_translated_fr.jsonl"
-
 NLLB_MODEL="${NLLB_MODEL:-$SCRATCH/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/manual}"
-TARGET_LANGS="fr"
+OUTPUT_DIR="$STAGE2/data"
+TARGET_LANGS="${TARGET_LANGS:-sw,yo,wo}"
+N_SAMPLES="${N_SAMPLES:-3000}"
 
-# Resolve to an actual model root directory (snapshot) in offline mode.
+# Resolve NLLB snapshot directory if needed.
 if [ -d "$NLLB_MODEL/snapshots" ]; then
   SNAPSHOT_DIR="$(ls -d "$NLLB_MODEL"/snapshots/* 2>/dev/null | head -n 1 || true)"
   if [ -n "$SNAPSHOT_DIR" ]; then
@@ -48,7 +47,6 @@ echo
 echo "=== Activate virtual environment ==="
 source "$SCRATCH/venvs/m2-align/bin/activate"
 python -V
-python -m pip -V
 echo
 
 echo "=== Hugging Face cache config ==="
@@ -56,54 +54,52 @@ export HF_HOME="$SCRATCH/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
 mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE"
+# NOTE: datasets (MMLU, MetaMathQA, MultiNLI) must be pre-downloaded.
+# Run once without HF_HUB_OFFLINE=1 to cache them, then re-enable for
+# subsequent runs.
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 echo "HF_HOME=$HF_HOME"
 echo "NLLB_MODEL=$NLLB_MODEL"
-echo "HF_HUB_OFFLINE=$HF_HUB_OFFLINE"
-echo "TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE"
 echo
 
 echo "=== Optional token loading (.tokens) ==="
 if [ -f "$PROJECT_ROOT/.tokens" ]; then
   # shellcheck disable=SC1090
   source "$PROJECT_ROOT/.tokens"
-  echo "Loaded .tokens file"
+  echo "Loaded .tokens"
 else
-  echo "WARNING: .tokens file not found; HF downloads may be unauthenticated"
+  echo "WARNING: .tokens not found"
 fi
 echo
 
-if [ ! -f "$INPUT_PATH" ]; then
-  echo "ERROR: Input file not found: $INPUT_PATH"
-  exit 1
-fi
 if [ ! -d "$NLLB_MODEL" ]; then
-  echo "ERROR: NLLB model directory not found: $NLLB_MODEL"
-  echo "Hint: pre-download facebook/nllb-200-3.3B to your HF cache, or export NLLB_MODEL to a valid local snapshot."
+  echo "ERROR: NLLB model not found: $NLLB_MODEL"
   exit 1
 fi
 if [ ! -f "$NLLB_MODEL/tokenizer_config.json" ]; then
-  echo "ERROR: tokenizer_config.json missing in: $NLLB_MODEL"
-  echo "This path is not a valid model root/snapshot for from_pretrained()."
-  exit 1
-fi
-if [ ! -f "$NLLB_MODEL/config.json" ]; then
-  echo "ERROR: config.json missing in: $NLLB_MODEL"
-  echo "This path is not a valid model root/snapshot for from_pretrained()."
+  echo "ERROR: tokenizer_config.json missing in $NLLB_MODEL"
   exit 1
 fi
 
-mkdir -p "$(dirname "$OUTPUT_PATH")"
+mkdir -p "$OUTPUT_DIR"
 
-echo "=== Start Stage2 query translation build ==="
+echo "=== Start Stage 2 translated data build ==="
+echo "Target languages : $TARGET_LANGS"
+echo "Samples per dataset: $N_SAMPLES"
+echo "Output dir: $OUTPUT_DIR"
 cd "$PROJECT_ROOT"
-python -u Stage2/build_query_translation_data.py \
-  --input-path "$INPUT_PATH" \
-  --output-path "$OUTPUT_PATH" \
+python -u Stage2/load_data.py \
+  --output-dir "$OUTPUT_DIR" \
+  --nllb-model "$NLLB_MODEL" \
   --target-languages "$TARGET_LANGS" \
-  --nllb-model "$NLLB_MODEL"
+  --n-samples "$N_SAMPLES" \
+  --batch-size 16 \
+  --num-beams 4 \
+  --max-source-length 256 \
+  --max-source-length-long 512 \
+  --max-target-length-short 256 \
+  --max-target-length-long 512
 
 echo "=== Done ==="
 date
-

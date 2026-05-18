@@ -21,8 +21,7 @@ LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/MindMerger/nllb_corpus/mapping/pytorch_model.bin"
 
-EN_DATA="$STAGE2/data/task_specialization_en.jsonl"
-TRANSLATED_DATA="$STAGE2/data/task_specialization_translated.jsonl"
+DATA_DIR="$STAGE2/data"
 OUTPUT_DIR="$STAGE2/outputs/augmentation"
 
 if [ -d "$MT_PATH" ]; then
@@ -89,12 +88,8 @@ if [ ! -f "$STAGE1_MAPPING_CKPT" ]; then
   echo "ERROR: Stage1 mapping checkpoint not found: $STAGE1_MAPPING_CKPT"
   exit 1
 fi
-if [ ! -f "$EN_DATA" ]; then
-  echo "ERROR: English task-specialization data not found: $EN_DATA"
-  exit 1
-fi
-if [ ! -f "$TRANSLATED_DATA" ]; then
-  echo "ERROR: Translated task-specialization data not found: $TRANSLATED_DATA"
+if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
+  echo "ERROR: No .jsonl files found in DATA_DIR: $DATA_DIR"
   exit 1
 fi
 
@@ -102,8 +97,7 @@ echo "=== Start Stage2 augmentation training ==="
 cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
-  --english-data "$EN_DATA" \
-  --translated-data "$TRANSLATED_DATA" \
+  --data-dir "$DATA_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --mt-path "$MT_PATH" \
   --llm-path "$LLM_PATH" \
@@ -111,8 +105,8 @@ python -u Stage2/train.py \
   --train-batch-size 2 \
   --eval-batch-size 2 \
   --grad-accum 8 \
-  --max-seq-len 256 \
-  --max-gen-len 64 \
+  --max-seq-len 512 \
+  --max-gen-len 512 \
   --use-wandb \
   --wandb-mode offline \
   --wandb-project m2-align \

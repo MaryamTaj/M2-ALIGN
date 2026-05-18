@@ -10,6 +10,8 @@ import random
 from datetime import datetime
 from typing import Iterable
 
+import glob
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -378,9 +380,14 @@ def main(args, logger: logging.Logger) -> None:
     if device.type != "cuda":
         raise RuntimeError("Stage2 augmentation expects CUDA.")
 
-    rows = read_jsonl(args.english_data)
-    if args.translated_data:
-        rows.extend(read_jsonl(args.translated_data))
+    jsonl_files = sorted(glob.glob(os.path.join(args.data_dir, "*.jsonl")))
+    if not jsonl_files:
+        raise FileNotFoundError(f"No .jsonl files found in --data-dir: {args.data_dir}")
+    rows = []
+    for path in jsonl_files:
+        file_rows = read_jsonl(path)
+        logger.info("Loaded %d rows from %s", len(file_rows), path)
+        rows.extend(file_rows)
     random.shuffle(rows)
 
     split_idx = int(len(rows) * (1.0 - args.val_ratio))
@@ -392,6 +399,7 @@ def main(args, logger: logging.Logger) -> None:
         "stage": "stage2_augmentation",
         "mt_path": args.mt_path,
         "llm_path": args.llm_path,
+        "data_dir": args.data_dir,
         "train_size": len(train_rows),
         "val_size": len(val_rows),
         "lr": args.lr,
@@ -582,10 +590,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 2: train the augmented mapping layer.")
     parser.add_argument("--stage1-mapping-ckpt", type=str, required=True,
                         help="Path to the Stage 1 pytorch_model.bin checkpoint.")
-    parser.add_argument("--english-data", type=str, required=True,
-                        help="Path to task_specialization_en.jsonl.")
-    parser.add_argument("--translated-data", type=str, default="",
-                        help="Optional path to task_specialization_translated.jsonl.")
+    parser.add_argument("--data-dir", type=str, required=True,
+                        help="Directory containing translated *.jsonl training files.")
     parser.add_argument("--output-dir", type=str, required=True,
                         help="Directory in which to save checkpoints.")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-3.3B")
