@@ -101,7 +101,7 @@ python -u Stage2/train.py \
   --output-dir "$OUTPUT_DIR" \
   --mt-path "$MT_PATH" \
   --llm-path "$LLM_PATH" \
-  --epochs 3 \
+  --epochs 1 \
   --train-batch-size 2 \
   --eval-batch-size 2 \
   --grad-accum 8 \
