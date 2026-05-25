@@ -340,10 +340,7 @@ def pick_choice(
         [formatted_prompt], tokenizer_llm, max_llm_seq_len, add_bos=False, add_eos=False, device=device
     )
     gen_kw = dict(
-        do_sample=True,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        top_k=TOP_K,
+        do_sample=False,
         max_new_tokens=MAX_NEW_TOKENS_FOR_MCQ,
         eos_token_id=tokenizer_llm.eos_token_id,
     )

@@ -479,10 +479,7 @@ def pick_choice(
         [nllb_text], tokenizer_mt, max_seq_len, [source_language], langs_map
     )
     gen_kw = dict(
-        do_sample=True,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        top_k=TOP_K,
+        do_sample=False,
         max_new_tokens=MAX_NEW_TOKENS_FOR_MCQ,
         eos_token_id=tokenizer_llm.eos_token_id,
     )

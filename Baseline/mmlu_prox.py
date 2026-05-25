@@ -292,10 +292,7 @@ def pick_choice(
     )
     generated_ids = model.generate(
         **enc,
-        do_sample=True,
-        temperature=TEMPERATURE,
-        top_p=TOP_P,
-        top_k=TOP_K,
+        do_sample=False,
         max_new_tokens=MAX_NEW_TOKENS_FOR_MCQ,
         logits_processor=logits_processor,
         pad_token_id=tokenizer.eos_token_id,
