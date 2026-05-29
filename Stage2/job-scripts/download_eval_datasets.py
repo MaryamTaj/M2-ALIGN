@@ -15,22 +15,24 @@ from datasets import load_dataset
 
 # (dataset_id, config, split)
 DATASETS: list[tuple[str, str, str]] = [
-    # MGSM — Swahili
-    ("juletxara/mgsm",       "sw", "test"),
-    # MSVAMP — Swahili
-    ("juletxara/msvamp",     "sw", "test"),
-    # X-CSQA — Swahili (labelled split is validation, no public test labels)
-    ("xcsr/x_csqa",          "sw", "validation"),
+    # MGSM — Swahili (juletxara/mgsm, ISO-2 config codes)
+    ("juletxara/mgsm",       "sw",        "test"),
+    # MSVAMP — Swahili (Mathoctopus/MSVAMP, ISO-2 config codes, fields: query/response)
+    ("Mathoctopus/MSVAMP",   "sw",        "test"),
+    # X-CSQA — Swahili (INK-USC/xcsr, config = "X-CSQA-{lang}", test split = 1000 rows)
+    ("INK-USC/xcsr",         "X-CSQA-sw", "test"),
     # XNLI — Swahili
-    ("xnli",                 "sw", "test"),
+    ("xnli",                 "sw",        "test"),
     # AfriMGSM — Swahili, Wolof, Yoruba
-    ("masakhane/afrimgsm",   "sw", "test"),
-    ("masakhane/afrimgsm",   "wo", "test"),
-    ("masakhane/afrimgsm",   "yo", "test"),
+    # masakhane/afrimgsm uses full FLORES config codes: swa, wol, yor
+    ("masakhane/afrimgsm",   "swa",       "test"),
+    ("masakhane/afrimgsm",   "wol",       "test"),
+    ("masakhane/afrimgsm",   "yor",       "test"),
     # AfriXNLI — Swahili, Wolof, Yoruba
-    ("masakhane/afrixnli",   "sw", "test"),
-    ("masakhane/afrixnli",   "wo", "test"),
-    ("masakhane/afrixnli",   "yo", "test"),
+    # masakhane/afrixnli uses full FLORES config codes: swa, wol, yor
+    ("masakhane/afrixnli",   "swa",       "test"),
+    ("masakhane/afrixnli",   "wol",       "test"),
+    ("masakhane/afrixnli",   "yor",       "test"),
 ]
 
 OK, FAILED = [], []

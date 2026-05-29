@@ -166,20 +166,23 @@ def build_math_prompt(question: str) -> tuple[str, str]:
 def build_xcsqa_prompt(sample: dict) -> tuple[str, str, list[str]]:
     """Return (prompt, nllb_text, valid_letters) for X-CSQA.
 
-    Expects the HuggingFace xcsr/x_csqa schema:
-        sample["question"]["stem"]     – question text
-        sample["question"]["choices"]  – list of {"label": "A", "text": "..."}
+    Expects the INK-USC/xcsr schema:
+        sample["question"]["stem"]              – question text
+        sample["question"]["choices"]["label"]  – list of letters ["A", "B", ...]
+        sample["question"]["choices"]["text"]   – parallel list of option strings
     """
     stem: str = sample["question"]["stem"]
-    choices: list[dict] = sample["question"]["choices"]
-    choice_lines = "\t".join(f"{c['label']}. {c['text']}" for c in choices)
-    valid_letters = [c["label"] for c in choices]
+    choices_dict: dict = sample["question"]["choices"]
+    labels: list[str] = choices_dict["label"]
+    texts: list[str] = choices_dict["text"]
+    choice_lines = "\t".join(f"{l}. {t}" for l, t in zip(labels, texts))
+    valid_letters = labels
     prompt = (
         f"{stem}\n"
         f"Options: {choice_lines}\n"
         "Answer:"
     )
-    nllb_text = f"{stem}\n" + " ".join(c["text"] for c in choices)
+    nllb_text = f"{stem}\n" + " ".join(texts)
     return prompt, nllb_text, valid_letters
 
 
@@ -220,27 +223,33 @@ def load_mgsm(lang: str) -> list[dict]:
 
 
 def load_msvamp(lang: str) -> list[dict]:
-    # juletxara/msvamp mirrors juletxara/mgsm in structure.
-    rows = _hf_load("juletxara/msvamp", lang, "test")
+    # Mathoctopus/MSVAMP uses ISO-2 config codes (sw, de, es, …).
+    # Fields: query (question text), response (numeric answer string).
+    rows = _hf_load("Mathoctopus/MSVAMP", lang, "test")
     out = []
     for r in rows:
-        question = r.get("question") or r.get("m_query") or ""
-        answer = r.get("answer") or r.get("answer_number") or ""
+        question = r.get("query") or r.get("m_query") or ""
+        answer = r.get("response") or r.get("answer") or ""
         out.append({"question": str(question), "answer": str(answer).replace(",", "")})
     return out
 
 
+# AfriMGSM / AfriXNLI use full FLORES-style config codes, not ISO-2.
+_AFRI_CONFIG = {"sw": "swa", "wo": "wol", "yo": "yor"}
+
+
 def load_xcsqa(lang: str) -> list[dict]:
-    # xcsr/x_csqa uses language codes as config names and "validation" split
-    # (no public test labels). Some datasets use "test" – try both.
-    for split in ("validation", "test"):
+    # INK-USC/xcsr uses config names of the form "X-CSQA-{lang}".
+    # The test split has 1000 labelled examples; validation has 300.
+    config = f"X-CSQA-{lang}"
+    for split in ("test", "validation"):
         try:
-            return _hf_load("xcsr/x_csqa", lang, split)
+            return _hf_load("INK-USC/xcsr", config, split)
         except RuntimeError:
             continue
     raise RuntimeError(
-        f"Could not load X-CSQA for language '{lang}' from 'xcsr/x_csqa'. "
-        "Check the dataset ID or supply --langs with supported language codes."
+        f"Could not load X-CSQA for language '{lang}' from 'INK-USC/xcsr' "
+        f"(tried config '{config}'). Check that '{lang}' is a supported language code."
     )
 
 
@@ -258,7 +267,9 @@ def load_xnli(lang: str) -> list[dict]:
 
 
 def load_afrimgsm(lang: str) -> list[dict]:
-    rows = _hf_load("masakhane/afrimgsm", lang, "test")
+    # masakhane/afrimgsm uses full config codes: swa, wol, yor (not sw, wo, yo).
+    config = _AFRI_CONFIG.get(lang, lang)
+    rows = _hf_load("masakhane/afrimgsm", config, "test")
     out = []
     for r in rows:
         answer = r.get("answer") or r.get("answer_number") or ""
@@ -267,7 +278,9 @@ def load_afrimgsm(lang: str) -> list[dict]:
 
 
 def load_afrixnli(lang: str) -> list[dict]:
-    rows = _hf_load("masakhane/afrixnli", lang, "test")
+    # masakhane/afrixnli uses full config codes: swa, wol, yor (not sw, wo, yo).
+    config = _AFRI_CONFIG.get(lang, lang)
+    rows = _hf_load("masakhane/afrixnli", config, "test")
     out = []
     for r in rows:
         label_raw = r.get("label", 0)
