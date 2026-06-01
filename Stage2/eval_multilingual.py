@@ -484,9 +484,9 @@ def evaluate_math(
             if ok:
                 correct += 1
             if idx < 8:
-                logger.debug(
-                    "lang=%s idx=%d | question=%r | raw_out=%r | extracted=%r | target=%s | ok=%s",
-                    lang, idx, sample["question"][:100], raw_out[:200],
+                logger.info(
+                    "lang=%s idx=%d | question=%r | prompt=%r | raw_out=%r | extracted=%r | target=%s | ok=%s",
+                    lang, idx, sample["question"][:100], prompt[:200], raw_out[:200],
                     extract_math_answer(raw_out), sample["answer"], ok,
                 )
 
@@ -539,13 +539,20 @@ def evaluate_xcsqa(
                 TASK_MAX_NEW_TOKENS["x-csqa"], amp_dtype, device,
             )
             pred = classify_xcsqa(raw_out, valid_letters)
-            ok = pred == sample["answerKey"]
+            raw_key = sample["answerKey"]
+            if isinstance(raw_key, int):
+                expected = chr(ord("A") + raw_key)
+            elif isinstance(raw_key, str) and raw_key.isdigit():
+                expected = chr(ord("A") + int(raw_key))
+            else:
+                expected = str(raw_key).upper()
+            ok = pred == expected
             if ok:
                 correct += 1
             if idx < 8:
-                logger.debug(
-                    "lang=%s idx=%d | stem=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["question"]["stem"][:80], raw_out, pred, sample["answerKey"], ok,
+                logger.info(
+                    "lang=%s idx=%d | stem=%r | prompt=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
+                    lang, idx, sample["question"]["stem"][:80], prompt[:200], raw_out, pred, expected, ok,
                 )
 
         acc = correct / len(samples) * 100 if samples else 0.0
@@ -603,9 +610,9 @@ def evaluate_nli(
             if ok:
                 correct += 1
             if idx < 8:
-                logger.debug(
-                    "lang=%s idx=%d | premise=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["premise"][:80], raw_out, pred, sample["label"], ok,
+                logger.info(
+                    "lang=%s idx=%d | premise=%r | prompt=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
+                    lang, idx, sample["premise"][:80], prompt[:200], raw_out, pred, sample["label"], ok,
                 )
 
         acc = correct / len(samples) * 100 if samples else 0.0
