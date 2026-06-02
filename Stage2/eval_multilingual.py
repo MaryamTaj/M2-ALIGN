@@ -240,13 +240,15 @@ _AFRI_CONFIG = {"sw": "swa", "wo": "wol", "yo": "yor"}
 
 def load_xcsqa(lang: str) -> list[dict]:
     # INK-USC/xcsr uses config names of the form "X-CSQA-{lang}".
-    # The test split has 1000 labelled examples; validation has 300.
+    # The test split withholds answerKey labels (shared-task format); use validation.
     config = f"X-CSQA-{lang}"
-    for split in ("test", "validation"):
+    for split in ("validation", "test"):
         try:
-            return _hf_load("INK-USC/xcsr", config, split)
+            rows = _hf_load("INK-USC/xcsr", config, split)
         except RuntimeError:
             continue
+        if rows and str(rows[0].get("answerKey", "")).strip():
+            return rows
     raise RuntimeError(
         f"Could not load X-CSQA for language '{lang}' from 'INK-USC/xcsr' "
         f"(tried config '{config}'). Check that '{lang}' is a supported language code."
