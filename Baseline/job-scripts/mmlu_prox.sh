@@ -5,11 +5,11 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=$HOME/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_eval_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/greedy_baseline_eval_%j.log
 
 set -euo pipefail
 
@@ -95,5 +95,6 @@ PY
 # ---------------------------
 python -u "$PROJECT_ROOT/Baseline/mmlu_prox.py" \
   --model-id "$MODEL_PATH" \
-  --local-files-only
+  --local-files-only \
+  --langs sw wo yo
 
