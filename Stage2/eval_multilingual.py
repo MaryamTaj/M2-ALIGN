@@ -228,7 +228,7 @@ def load_msvamp(lang: str) -> list[dict]:
     rows = _hf_load("Mathoctopus/MSVAMP", lang, "test")
     out = []
     for r in rows:
-        question = r.get("query") or r.get("m_query") or ""
+        question = r.get("m_query") or r.get("query") or ""
         answer = r.get("response") or r.get("answer") or ""
         out.append({"question": str(question), "answer": str(answer).replace(",", "")})
     return out
