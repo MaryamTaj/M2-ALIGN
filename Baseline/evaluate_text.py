@@ -86,7 +86,7 @@ def generate_text(
     device: torch.device,
     max_new_tokens: int,
 ) -> str:
-    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+    messages = [{"role": "user", "content": prompt}]
     enc = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=True,
         return_tensors="pt", return_dict=True,
