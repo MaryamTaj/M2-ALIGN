@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=baseline_eval_multilingual
+#SBATCH --job-name=baseline_evaluate_text_EN
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_eval_%x_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_text_EN_%x_%j.log
 
 # Usage:
 # sbatch --export=TASK=mgsm   evaluate_text.sh

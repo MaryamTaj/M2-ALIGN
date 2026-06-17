@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=6:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -110,14 +110,14 @@ COMMON_ARGS=(
   --local-files-only
 )
 
-# ── 1. MGSM (Swahili) ───────────────────────────────────────────────────────
-echo "=== [1/6] MGSM — Swahili ==="
-date
-python -u eval_multilingual.py \
-  --task  mgsm \
-  --langs sw \
-  "${COMMON_ARGS[@]}"
-echo
+# # ── 1. MGSM (Swahili) ───────────────────────────────────────────────────────
+# echo "=== [1/6] MGSM — Swahili ==="
+# date
+# python -u eval_multilingual.py \
+#   --task  mgsm \
+#   --langs sw \
+#   "${COMMON_ARGS[@]}"
+# echo
 
 # ── 2. MSVAMP (Swahili) ──────────────────────────────────────────────────────
 echo "=== [2/6] MSVAMP — Swahili ==="
@@ -128,41 +128,41 @@ python -u eval_multilingual.py \
   "${COMMON_ARGS[@]}"
 echo
 
-# ── 3. X-CSQA (Swahili) ──────────────────────────────────────────────────────
-echo "=== [3/6] X-CSQA — Swahili ==="
-date
-python -u eval_multilingual.py \
-  --task  x-csqa \
-  --langs sw \
-  "${COMMON_ARGS[@]}"
-echo
+# # ── 3. X-CSQA (Swahili) ──────────────────────────────────────────────────────
+# echo "=== [3/6] X-CSQA — Swahili ==="
+# date
+# python -u eval_multilingual.py \
+#   --task  x-csqa \
+#   --langs sw \
+#   "${COMMON_ARGS[@]}"
+# echo
 
-# ── 4. XNLI (Swahili) ────────────────────────────────────────────────────────
-echo "=== [4/6] XNLI — Swahili ==="
-date
-python -u eval_multilingual.py \
-  --task  xnli \
-  --langs sw \
-  "${COMMON_ARGS[@]}"
-echo
+# # ── 4. XNLI (Swahili) ────────────────────────────────────────────────────────
+# echo "=== [4/6] XNLI — Swahili ==="
+# date
+# python -u eval_multilingual.py \
+#   --task  xnli \
+#   --langs sw \
+#   "${COMMON_ARGS[@]}"
+# echo
 
-# ── 5. AfriMGSM (Swahili, Wolof, Yoruba) ────────────────────────────────────
-echo "=== [5/6] AfriMGSM — Swahili, Wolof, Yoruba ==="
-date
-python -u eval_multilingual.py \
-  --task  afrimgsm \
-  --langs sw,wo,yo \
-  "${COMMON_ARGS[@]}"
-echo
+# # ── 5. AfriMGSM (Swahili, Wolof, Yoruba) ────────────────────────────────────
+# echo "=== [5/6] AfriMGSM — Swahili, Wolof, Yoruba ==="
+# date
+# python -u eval_multilingual.py \
+#   --task  afrimgsm \
+#   --langs sw,wo,yo \
+#   "${COMMON_ARGS[@]}"
+# echo
 
-# ── 6. AfriXNLI (Swahili, Wolof, Yoruba) ────────────────────────────────────
-echo "=== [6/6] AfriXNLI — Swahili, Wolof, Yoruba ==="
-date
-python -u eval_multilingual.py \
-  --task  afrixnli \
-  --langs sw,wo,yo \
-  "${COMMON_ARGS[@]}"
-echo
+# # ── 6. AfriXNLI (Swahili, Wolof, Yoruba) ────────────────────────────────────
+# echo "=== [6/6] AfriXNLI — Swahili, Wolof, Yoruba ==="
+# date
+# python -u eval_multilingual.py \
+#   --task  afrixnli \
+#   --langs sw,wo,yo \
+#   "${COMMON_ARGS[@]}"
+# echo
 
-echo "=== All benchmarks complete ==="
-date
+# echo "=== All benchmarks complete ==="
+# date
