@@ -1,0 +1,12 @@
+2026-06-17 19:48:36 | INFO | Task: x-csqa | Model: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b | Languages: ['en'] | max_examples=None
+2026-06-17 19:51:30 | INFO | [x-csqa] lang=en | 1000 examples
+2026-06-17 19:52:01 | INFO | lang=en idx=0 | stem='The dental office handled a lot of patients who experienced traumatic mouth inju' | raw_out='The most logical answer is:' | pred=A | target=C | ok=False
+2026-06-17 19:52:02 | INFO | lang=en idx=1 | stem='Where can you find bald eagles and cheese in the midwest?' | raw_out='The correct answer is: **' | pred=A | target=E | ok=False
+2026-06-17 19:52:02 | INFO | lang=en idx=2 | stem='Why would a person stay at their job without being paid?' | raw_out='The best answer is: **' | pred=A | target=E | ok=False
+2026-06-17 19:52:02 | INFO | lang=en idx=3 | stem='The electric fan had gotten too loud and was bothering others, though they allow' | raw_out='The key to solving this is' | pred=A | target=B | ok=False
+2026-06-17 19:52:02 | INFO | lang=en idx=4 | stem='If air is held down by gravity, what does it usually cover.' | raw_out='The correct answer is: **' | pred=A | target=D | ok=False
+2026-06-17 19:55:12 | INFO | [x-csqa] lang=en accuracy=19.90%
+2026-06-17 19:55:12 | INFO | === X-CSQA Baseline Summary ===
+2026-06-17 19:55:12 | INFO |   en       19.90%
+2026-06-17 19:55:12 | INFO |   Macro-avg (1 langs): 19.90%
+2026-06-17 19:55:12 | INFO |   Micro-avg (1000 examples): 19.90%

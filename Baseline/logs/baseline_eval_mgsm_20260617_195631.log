@@ -1,0 +1,12 @@
+2026-06-17 19:56:31 | INFO | Task: mgsm | Model: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b | Languages: ['en'] | max_examples=None
+2026-06-17 19:59:29 | INFO | [mgsm] lang=en | 250 examples
+2026-06-17 19:59:51 | INFO | lang=en idx=0 | question='Janet’s ducks lay 16 eggs per day. She eats three for breakfast every morning an' | raw_out="Let's think step by step.\n\n1. Janet’s ducks lay **16 eggs per day**.\n\n2. She eats **3 eggs for breakfast** every morning.\n\n3. She bakes muffins using **4 eggs per day**.\n\n4. So, total eggs used by Jan" | extracted='18' | target=18 | ok=True
+2026-06-17 19:59:54 | INFO | lang=en idx=1 | question='A robe takes 2 bolts of blue fiber and half that much white fiber.  How many bol' | raw_out="Sure! Let's break it down step by step.\n\n1. The robe requires **2 bolts of blue fiber**.\n2. It also requires **half that much white fiber**.  \n   → Half of 2 is **1**.  \n   → So, it needs **1 bolt of " | extracted='3' | target=3 | ok=True
+2026-06-17 20:00:04 | INFO | lang=en idx=2 | question='Josh decides to try flipping a house.  He buys a house for $80,000 and then puts' | raw_out="Let's think step by step.\n\nJosh buys the house for $80,000.\n\nHe then spends $50,000 on repairs.\n\nSo, his total investment is:\n\n$80,000 (purchase price) + $50,000 (repairs) = $130,000.\n\nNow, the proble" | extracted='70000' | target=70000 | ok=True
+2026-06-17 20:00:07 | INFO | lang=en idx=3 | question='James decides to run 3 sprints 3 times a week.  He runs 60 meters each sprint.  ' | raw_out="Sure! Let's break it down step by step.\n\n1. James runs **3 sprints** each time.\n2. Each sprint is **60 meters**.\n3. So, in one session, he runs:  \n   3 sprints × 60 meters = **180 meters**.\n\n4. He doe" | extracted='540' | target=540 | ok=True
+2026-06-17 20:00:12 | INFO | lang=en idx=4 | question='Every day, Wendi feeds each of her chickens three cups of mixed chicken feed, co' | raw_out='We are told that Wendi feeds each chicken **three cups of mixed chicken feed per day**, divided into three separate meals.\n\nShe has **20 chickens**, so the **total daily feed required** is:\n\n> 20 chic' | extracted='20' | target=20 | ok=True
+2026-06-17 20:26:33 | INFO | [mgsm] lang=en accuracy=90.80%
+2026-06-17 20:26:33 | INFO | === MGSM Baseline Summary ===
+2026-06-17 20:26:33 | INFO |   en       90.80%
+2026-06-17 20:26:33 | INFO |   Macro-avg (1 langs): 90.80%
+2026-06-17 20:26:33 | INFO |   Micro-avg (250 examples): 90.80%
