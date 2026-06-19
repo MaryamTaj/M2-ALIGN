@@ -34,9 +34,13 @@ TASK_DEFAULT_LANGS: dict[str, list[str]] = {
 TASK_MAX_NEW_TOKENS: dict[str, int] = {
     "mgsm": 512,
     "msvamp": 512,
-    "x-csqa": 6,
+    "x-csqa": 20,
     "xnli": 20,
 }
+
+_MATH_SYSTEM  = "You are a helpful assistant that solves math problems step by step."
+_XCSQA_SYSTEM = "You are a helpful assistant that answers commonsense questions."
+_XNLI_SYSTEM  = "You are a helpful assistant that determines textual entailment."
 
 _XNLI_INT_TO_STR = {0: "entailment", 1: "neutral", 2: "contradiction"}
 _NLI_LABEL_STRINGS = ["entailment", "neutral", "contradiction"]
@@ -85,8 +89,12 @@ def generate_text(
     tokenizer: AutoTokenizer,
     device: torch.device,
     max_new_tokens: int,
+    system_message: str | None = None,
 ) -> str:
-    messages = [{"role": "user", "content": prompt}]
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({"role": "user", "content": prompt})
     enc = tokenizer.apply_chat_template(
         messages, tokenize=True, add_generation_prompt=True,
         return_tensors="pt", return_dict=True,
@@ -158,12 +166,7 @@ _LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "x-csqa": load_xcsqa, "xnl
 # ─── Prompt builders (identical to Stage2/eval_multilingual.py) ─────────────
 
 def build_math_prompt(question: str) -> str:
-    return (
-        "Below is an instruction that describes a task. "
-        "Write a response that appropriately completes the request.\n\n"
-        f"### Instruction:\n{question}\n\n"
-        "### Response: Let's think step by step."
-    )
+    return f"{question}\n\nLet's think step by step."
 
 
 def build_xcsqa_prompt(sample: dict) -> tuple[str, list[str]]:
@@ -171,16 +174,22 @@ def build_xcsqa_prompt(sample: dict) -> tuple[str, list[str]]:
     choices_dict: dict = sample["question"]["choices"]
     labels: list[str] = choices_dict["label"]
     texts: list[str] = choices_dict["text"]
-    choice_lines = "\t".join(f"{l}. {t}" for l, t in zip(labels, texts))
-    prompt = f"{stem}\nOptions: {choice_lines}\nAnswer:"
+    choice_lines = "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
+    prompt = (
+        f"Question: {stem}\n"
+        f"Choices:\n{choice_lines}\n\n"
+        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D, ...)."
+    )
     return prompt, labels
 
 
 def build_xnli_prompt(sample: dict) -> str:
     return (
+        "Determine the relationship between the premise and the hypothesis. "
+        "Respond with exactly one word: entailment, neutral, or contradiction.\n\n"
         f"Premise: {sample['premise']}\n"
         f"Hypothesis: {sample['hypothesis']}\n"
-        "Label:"
+        "Answer:"
     )
 
 
@@ -212,14 +221,13 @@ def classify_nli(text: str) -> str:
     for label in _NLI_LABEL_STRINGS:
         if label in lower:
             return label
-    return "entailment"
+    return text.strip().lower()
 
 
 def classify_xcsqa(text: str, valid_letters: list[str]) -> str:
-    for ch in text.strip():
-        if ch in valid_letters:
-            return ch
-    return valid_letters[0]
+    valid_set = set(valid_letters)
+    matches = [ch for ch in text if ch in valid_set]
+    return matches[-1] if matches else valid_letters[0]
 
 
 # ─── Evaluation loops ────────────────────────────────────────────────────────
@@ -266,7 +274,7 @@ def evaluate_math(
 
         for idx, sample in enumerate(tqdm(samples, desc=f"{task}/{lang}")):
             prompt = build_math_prompt(sample["question"])
-            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS[task])
+            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS[task], _MATH_SYSTEM)
             ok = math_correct(raw_out, sample["answer"])
             if ok:
                 correct += 1
@@ -309,7 +317,7 @@ def evaluate_xcsqa(
 
         for idx, sample in enumerate(tqdm(samples, desc=f"x-csqa/{lang}")):
             prompt, valid_letters = build_xcsqa_prompt(sample)
-            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS["x-csqa"])
+            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS["x-csqa"], _XCSQA_SYSTEM)
             pred = classify_xcsqa(raw_out, valid_letters)
             raw_key = sample["answerKey"]
             if isinstance(raw_key, int):
@@ -361,7 +369,7 @@ def evaluate_nli(
 
         for idx, sample in enumerate(tqdm(samples, desc=f"{task}/{lang}")):
             prompt = build_xnli_prompt(sample)
-            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS[task])
+            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS[task], _XNLI_SYSTEM)
             pred = classify_nli(raw_out)
             ok = pred == sample["label"]
             if ok:
