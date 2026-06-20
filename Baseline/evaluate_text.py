@@ -403,6 +403,10 @@ def main() -> None:
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument(
+        "--langs", nargs="+", default=None,
+        help="Language codes to evaluate (e.g. --langs sw en zh). Defaults to task default.",
+    )
+    parser.add_argument(
         "--max-examples", type=int, default=None,
         help="Cap on examples per language (None = all).",
     )
@@ -415,7 +419,7 @@ def main() -> None:
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     logger = setup_logging(log_dir, args.task)
 
-    langs = TASK_DEFAULT_LANGS[args.task]
+    langs = args.langs if args.langs else TASK_DEFAULT_LANGS[args.task]
     if args.smoke:
         langs = langs[:1]
         args.max_examples = args.max_examples or 5

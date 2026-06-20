@@ -18,11 +18,14 @@
 # sbatch --export=TASK=x-csqa evaluate_text.sh
 #
 # Optional overrides:
-#   sbatch --export=TASK=mgsm,MAX_EXAMPLES=50 evaluate_text.sh
+#   sbatch --export=TASK=mgsm,LANGS=sw             evaluate_text.sh
+#   sbatch --export=TASK=xnli,LANGS="sw en zh"     evaluate_text.sh
+#   sbatch --export=TASK=mgsm,MAX_EXAMPLES=50       evaluate_text.sh
 
 set -euo pipefail
 
 TASK="${TASK:-mgsm}"
+LANGS="${LANGS:-}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
@@ -66,11 +69,15 @@ fi
 
 # Build optional args
 EXTRA_ARGS="--local-files-only"
+if [ -n "$LANGS" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS --langs $LANGS"
+fi
 if [ -n "$MAX_EXAMPLES" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --max-examples $MAX_EXAMPLES"
 fi
 
 echo "=== Start baseline evaluation: $TASK ==="
+echo "LANGS=${LANGS:-<task default>}"
 cd "$PROJECT_ROOT"
 python -u Baseline/evaluate_text.py \
   --task "$TASK" \
