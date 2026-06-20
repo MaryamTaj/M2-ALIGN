@@ -3,7 +3,7 @@ the offline SLURM job.
 
 Run this on a login node (which has internet access):
 
-    python download_eval_datasets.py
+    python load_text_evaluation_data.py
 
 Each dataset is fetched once and stored under $HF_DATASETS_CACHE (or
 ~/.cache/huggingface/datasets by default).  The offline job then reads
