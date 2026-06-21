@@ -2,8 +2,11 @@
 
 Tasks and sources
 -----------------
-mgsm / msvamp  → 30,000 samples from Mathoctopus/Mathoctopus_cross_train
-                  (Chen et al., 2023: Swahili query, English CoT response)
+mgsm / msvamp  → 30,000 samples from meta-math/MetaMathQA, queries translated
+                  to Swahili with NLLB-200-3.3B, English answers kept.
+                  (Mathoctopus_cross_train from Chen et al. 2023 is no longer on
+                  the Hub; MetaMathQA is the same class of EN→SW cross-lingual
+                  math data at the 30K-per-language scale MindMerger used.)
 xnli           → 2,490 samples from xnli sw validation split
                   (Swahili premise+hypothesis, English label)
 xcsqa          → 8,888 samples from commonsense_qa train split,
@@ -118,42 +121,58 @@ def translate_batch(
 
 
 # ---------------------------------------------------------------------------
-# Math — Chen et al. (2023) via Mathoctopus/Mathoctopus_cross_train
+# Math — MetaMathQA queries translated to Swahili, English answers kept
 # ---------------------------------------------------------------------------
 
-def load_math(n_samples: int, seed: int, logger: logging.Logger, **_) -> list[dict]:
-    """Stream Mathoctopus_cross_train and collect n_samples Swahili rows.
+def load_math(
+    n_samples: int,
+    seed: int,
+    logger: logging.Logger,
+    nllb_model: str = "facebook/nllb-200-3.3B",
+    batch_size: int = 16,
+    num_beams: int = 4,
+    **_,
+) -> list[dict]:
+    """Sample MetaMathQA, translate queries to Swahili with NLLB, keep English answers.
 
-    cross_train = Swahili query, English CoT response — the correct pairing
-    for MindMerger: NLLB encodes the Swahili question, the frozen LLM
-    generates the English answer.
+    MetaMathQA (395K rows) augments GSM8K and MATH problems with varied
+    reformulations. Sampling 30K and translating queries to Swahili produces
+    the same Swahili-query / English-answer cross-lingual training corpus that
+    MindMerger used from Chen et al. (2023), at the same 30K-per-language scale.
     """
-    logger.info("Streaming Mathoctopus/Mathoctopus_cross_train for Swahili ...")
-    ds = load_dataset("Mathoctopus/Mathoctopus_cross_train", split="train", streaming=True)
+    logger.info("Loading meta-math/MetaMathQA ...")
+    ds = load_dataset("meta-math/MetaMathQA", split="train")
+    logger.info("MetaMathQA: %d rows total", len(ds))
 
-    sw_rows: list[dict] = []
-    for sample in ds:
-        if sample.get("lang") != "Swahili":
-            continue
-        query    = sample.get("query",    "").strip()
-        response = sample.get("response", "").strip()
-        if not query or not response:
-            continue
-        sw_rows.append({
-            "id": stable_id(f"math_{query}"),
-            "query": query,
-            "answer": response,
-            "source_language": "Swahili",
-            "source_dataset": "mathoctopus_cross_train",
-        })
-        if len(sw_rows) >= n_samples * 2:
-            break
+    rows = [
+        {"query": r["query"].strip(), "answer": r["response"].strip()}
+        for r in ds
+        if r["query"].strip() and r["response"].strip()
+    ]
 
-    logger.info("Collected %d Swahili math rows before sampling.", len(sw_rows))
-    n = min(n_samples, len(sw_rows))
+    n = min(n_samples, len(rows))
     if n < n_samples:
         logger.warning("Requested %d but only %d available; using all.", n_samples, n)
-    return random.Random(seed).sample(sw_rows, n)
+    sampled = random.Random(seed).sample(rows, n)
+
+    tokenizer, model, device = load_nllb(nllb_model, logger)
+    queries_en = [r["query"] for r in sampled]
+    logger.info("Translating %d queries EN→SW ...", len(queries_en))
+    queries_sw = translate_batch(
+        queries_en, tokenizer, model, device,
+        batch_size=batch_size, num_beams=num_beams,
+    )
+
+    return [
+        {
+            "id": stable_id(f"math_{r['query']}"),
+            "query": q_sw,
+            "answer": r["answer"],
+            "source_language": "Swahili",
+            "source_dataset": "metamathqa_translated",
+        }
+        for r, q_sw in zip(sampled, queries_sw)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -280,13 +299,13 @@ def main() -> None:
     parser.add_argument("--n_samples", type=int, default=None,
                         help="Number of samples (defaults to MindMerger paper values per task).")
     parser.add_argument("--seed", type=int, default=42)
-    # xcsqa translation args (ignored for other tasks)
+    # NLLB translation args (used by mgsm, msvamp, and xcsqa)
     parser.add_argument("--nllb_model", type=str, default="facebook/nllb-200-3.3B",
-                        help="HuggingFace ID or local path for NLLB-200-3.3B (xcsqa only).")
+                        help="HuggingFace ID or local path for NLLB-200-3.3B.")
     parser.add_argument("--batch_size", type=int, default=16,
-                        help="Translation batch size (xcsqa only).")
+                        help="Translation batch size.")
     parser.add_argument("--num_beams", type=int, default=4,
-                        help="Beam width for NLLB translation (xcsqa only).")
+                        help="Beam width for NLLB translation.")
     args = parser.parse_args()
 
     logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))

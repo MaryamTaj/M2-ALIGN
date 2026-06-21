@@ -4,32 +4,47 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
-#SBATCH --time=0:30:00
+#SBATCH --mem=48G
+#SBATCH --time=4:00:00
+#SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_load_data_%j.log
 
-# Usage: TASK=mgsm sbatch load_data.sh
-#   Supported tasks: mgsm, msvamp, xnli, xcsqa
-#   Default: runs all four tasks sequentially.
+# Build all Stage 2 training data (math, XNLI, X-CSQA) on a compute node.
+#
+# BEFORE SUBMITTING: run the following on a login node (internet access) to
+# populate the HuggingFace cache that this job reads offline:
+#
+#   source "$SCRATCH/venvs/m2-align/bin/activate"
+#   export HF_HOME="$SCRATCH/huggingface"
+#   python -c "from datasets import load_dataset; \
+#     load_dataset('meta-math/MetaMathQA', split='train'); \
+#     load_dataset('xnli', 'sw', split='validation'); \
+#     load_dataset('commonsense_qa', split='train')"
+#
+# The NLLB-200-3.3B model weights are assumed already downloaded at NLLB_MODEL.
+#
+# Usage: sbatch Stage2/job-scripts/load_data.sh
 
 set -euo pipefail
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
-STAGE2="$PROJECT_ROOT/Stage2"
-MINDMERGER_DATA="$PROJECT_ROOT/mindmerger_data"
+NLLB_MODEL="$HOME/.cache/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/1a07f7d195896b2114afcb79b7b57ab512e7b43e"
+DATA_DIR="$PROJECT_ROOT/Stage2/data/stage2"
 
 echo "=== Job info ==="
 date
 hostname
 echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}"
+nvidia-smi || true
 echo
 
 echo "=== Load modules ==="
 module --force purge
 module load StdEnv/2023
 module load python/3.11.5
+module load cudacore/.12.2.2
 module load arrow/18.1.0
 echo
 
@@ -38,43 +53,76 @@ source "$SCRATCH/venvs/m2-align/bin/activate"
 python -V
 echo
 
-echo "=== Hugging Face cache config ==="
+echo "=== HuggingFace cache config (offline mode) ==="
 export HF_HOME="$SCRATCH/huggingface"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
-mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
+mkdir -p "$HF_HOME" "$HF_DATASETS_CACHE"
+echo "HF_HOME=$HF_HOME"
+echo "NLLB_MODEL=$NLLB_MODEL"
+echo "DATA_DIR=$DATA_DIR"
 echo
 
-if [ ! -d "$MINDMERGER_DATA" ]; then
-  echo "ERROR: mindmerger_data directory not found: $MINDMERGER_DATA"
+if [ ! -d "$NLLB_MODEL" ]; then
+  echo "ERROR: NLLB snapshot not found: $NLLB_MODEL"
+  echo "Download it on a login node with: python -c \"from transformers import AutoModelForSeq2SeqLM; AutoModelForSeq2SeqLM.from_pretrained('facebook/nllb-200-3.3B')\""
   exit 1
 fi
 
 cd "$PROJECT_ROOT"
 
-run_task() {
-  local task="$1"
-  local out_dir="$STAGE2/data/stage2/$task"
-  echo "--- Loading task: $task → $out_dir ---"
-  python -u Stage2/load_data.py \
-    --task       "$task" \
-    --data_dir   "$MINDMERGER_DATA" \
-    --output_dir "$out_dir" \
-    --seed       42
-  echo "Done: $task"
-  echo
-}
+# ---------------------------------------------------------------------------
+# 1. XNLI — Swahili validation split (no translation needed, very fast)
+# ---------------------------------------------------------------------------
+echo "=== [1/3] XNLI ==="
+python -u Stage2/load_data.py \
+  --task        xnli \
+  --output_dir  "$DATA_DIR/xnli" \
+  --seed        42
+echo
 
-if [ -n "${TASK:-}" ]; then
-  run_task "$TASK"
-else
-  echo "=== No TASK set — running all four tasks ==="
-  run_task mgsm
-  run_task msvamp
-  run_task xnli
-  run_task xcsqa
-fi
+# ---------------------------------------------------------------------------
+# 2. Math — MetaMathQA × 30K, translated EN→SW with NLLB
+#    mgsm and msvamp use identical training data; translate once, symlink second.
+# ---------------------------------------------------------------------------
+echo "=== [2/3] Math (MetaMathQA → Swahili) ==="
+python -u Stage2/load_data.py \
+  --task        mgsm \
+  --output_dir  "$DATA_DIR/mgsm" \
+  --nllb_model  "$NLLB_MODEL" \
+  --batch_size  32 \
+  --num_beams   4 \
+  --seed        42
 
-echo "=== Done ==="
+mkdir -p "$DATA_DIR/msvamp"
+ln -sf "$DATA_DIR/mgsm/mgsm.jsonl" "$DATA_DIR/msvamp/msvamp.jsonl"
+echo "Symlinked msvamp → mgsm (identical source and seed)"
+echo
+
+# ---------------------------------------------------------------------------
+# 3. X-CSQA — CommonsenseQA train × 8,888, translated EN→SW with NLLB
+# ---------------------------------------------------------------------------
+echo "=== [3/3] X-CSQA (CommonsenseQA → Swahili) ==="
+python -u Stage2/load_data.py \
+  --task        xcsqa \
+  --output_dir  "$DATA_DIR/xcsqa" \
+  --nllb_model  "$NLLB_MODEL" \
+  --batch_size  32 \
+  --num_beams   4 \
+  --seed        42
+echo
+
+echo "=== All tasks complete ==="
+echo "Outputs:"
+for f in "$DATA_DIR"/mgsm/mgsm.jsonl \
+          "$DATA_DIR"/msvamp/msvamp.jsonl \
+          "$DATA_DIR"/xnli/xnli.jsonl \
+          "$DATA_DIR"/xcsqa/xcsqa.jsonl; do
+  if [ -e "$f" ]; then
+    wc -l "$f"
+  else
+    echo "MISSING: $f"
+  fi
+done
 date
