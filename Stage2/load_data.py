@@ -6,8 +6,10 @@ mgsm / msvamp  → 30,000 samples from Mathoctopus/Mathoctopus_cross_train
                   (Chen et al., 2023: Swahili query, English CoT response)
 xnli           → 2,490 samples from xnli sw validation split
                   (Swahili premise+hypothesis, English label)
-xcsqa          → 8,888 samples from INK-USC/xcsr X-CSQA-en train split,
+xcsqa          → 8,888 samples from commonsense_qa train split,
                   translated to Swahili with NLLB-200-3.3B
+                  (INK-USC/xcsr has no train split; CommonsenseQA is the source
+                  X-CSQA was built from)
 
 All tasks output JSONL with fields:
     query            – Swahili input text
@@ -194,16 +196,17 @@ def load_xcsqa(
     num_beams: int = 4,
     **_,
 ) -> list[dict]:
-    """Load X-CSQA English train and translate questions+choices to Swahili.
+    """Load CommonsenseQA English train, sample 8,888, translate to Swahili.
 
-    INK-USC/xcsr provides no Swahili training split. We load the 8,888-example
-    English train split, translate each question stem and each answer choice
-    individually with NLLB-200-3.3B, then reassemble the formatted query.
+    INK-USC/xcsr has no train split for any language. X-CSQA's training set is
+    derived from commonsense_qa (train split, ~9,741 examples filtered to 8,888).
+    We load commonsense_qa, sample n_samples, translate each question and each
+    answer choice to Swahili with NLLB-200-3.3B, then reassemble the query.
     Answer keys (A/B/C/D/E) are structural labels and are not translated.
     """
-    logger.info("Loading INK-USC/xcsr X-CSQA-en train ...")
-    ds = load_dataset("INK-USC/xcsr", "X-CSQA-en", split="train")
-    logger.info("X-CSQA-en train: %d rows", len(ds))
+    logger.info("Loading commonsense_qa train (source for X-CSQA training set) ...")
+    ds = load_dataset("commonsense_qa", split="train")
+    logger.info("commonsense_qa train: %d rows", len(ds))
 
     n = min(n_samples, len(ds))
     if n < n_samples:
@@ -211,12 +214,11 @@ def load_xcsqa(
     indices = random.Random(seed).sample(range(len(ds)), n)
     sampled = [ds[i] for i in indices]
 
-    # Collect all texts that need translation in one pass to maximise batching.
-    stems   = [r["question"]["stem"] for r in sampled]
-    # choices is {"label": [...], "text": [...]} in HuggingFace format.
-    n_opts  = max(len(r["question"]["choices"]["label"]) for r in sampled)
+    # commonsense_qa fields: question (str), choices {"label": [...], "text": [...]}, answerKey
+    stems  = [r["question"] for r in sampled]
+    n_opts = max(len(r["choices"]["label"]) for r in sampled)
     choices_per_pos: list[list[str]] = [
-        [r["question"]["choices"]["text"][pos] if pos < len(r["question"]["choices"]["text"]) else ""
+        [r["choices"]["text"][pos] if pos < len(r["choices"]["text"]) else ""
          for r in sampled]
         for pos in range(n_opts)
     ]
@@ -240,7 +242,7 @@ def load_xcsqa(
 
     rows: list[dict] = []
     for idx, r in enumerate(sampled):
-        labels = r["question"]["choices"]["label"]
+        labels = r["choices"]["label"]
         sw_opts = [sw_choices_per_pos[pos][idx] for pos in range(len(labels))]
         options_block = "\n".join(f"{lbl}. {txt}" for lbl, txt in zip(labels, sw_opts))
         query = f"{sw_stems[idx]}\n{options_block}"
@@ -249,7 +251,7 @@ def load_xcsqa(
             "query": query,
             "answer": r["answerKey"],
             "source_language": "Swahili",
-            "source_dataset": "xcsqa_en_train_translated",
+            "source_dataset": "commonsense_qa_translated",
         })
 
     return rows
