@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=8:00:00
+#SBATCH --time=24:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -13,7 +13,6 @@
 
 set -euo pipefail
 
-# Local model snapshots on SCRATCH (offline compute nodes).
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 
@@ -40,7 +39,6 @@ module load python/3.11.5
 module load cudacore/.12.2.2
 module load arrow/18.1.0
 echo
-
 
 echo "=== Activate virtual environment ==="
 source "$SCRATCH/venvs/m2-align/bin/activate"
@@ -79,25 +77,25 @@ else
 fi
 echo
 
-
 cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 deepspeed --master_port 50002 train.py --deepspeed \
   --llm_path "$LLM_PATH" \
   --mt_path "$MT_PATH" \
+  --save_name M2-ALIGN \
   --stage_name mapping \
   --task nllb_corpus \
   --augmentation False \
-  --nllb_data_dir ./data/nllb \
-  --nllb_languages Swahili,Yoruba,Wolof \
-  --train_num 9000 \
-  --val_size 900 \
+  --nllb_data_dir ./data/stage1 \
+  --nllb_languages Swahili \
+  --train_num 100000 \
+  --val_size 3000 \
   --train_batch_size 24 \
   --train_micro_batch_size_per_gpu 1 \
-  --epoch_num 1 \
+  --epoch_num 3 \
   --max_seq_len 256 \
   --max_gen_len 256 \
   --eval_batch_size 2 \
   --use_wandb True \
   --wandb_mode offline \
   --wandb_project m2-align \
-  --wandb_run_name stage1
+  --wandb_run_name stage1-nllb-swahili
