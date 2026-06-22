@@ -109,6 +109,7 @@ echo "STAGE1_MAPPING_CKPT=$STAGE1_MAPPING_CKPT"
 echo
 cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
+  --task       "$TASK" \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --data-dir   "$DATA_DIR" \
   --output-dir "$OUTPUT_DIR" \

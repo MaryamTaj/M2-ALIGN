@@ -33,6 +33,70 @@ NLLB_LANG_MAP = {
     "French": "fra_Latn",
 }
 
+# Task-specific system messages — must match evaluate_text.py exactly.
+_SYSTEM_MSGS: dict[str, str] = {
+    "xnli":   "You are a helpful assistant that determines textual entailment.",
+    "xcsqa":  "You are a helpful assistant that answers commonsense questions.",
+    "mgsm":   "You are a helpful assistant that solves math problems step by step.",
+    "msvamp": "You are a helpful assistant that solves math problems step by step.",
+}
+
+
+def _build_user_prompt(raw_query: str, task: str) -> str:
+    """Build the task-formatted user prompt from the raw JSONL query string.
+
+    The returned string matches the prompt format used in evaluate_text.py so
+    training and evaluation see identical LLM inputs.
+
+    Args:
+        raw_query: The ``query`` field from the training JSONL.  Format per task:
+            xnli   → ``"{premise}\\n{hypothesis}"``
+            xcsqa  → ``"{stem}\\nA. {c1}\\nB. {c2}..."``
+            math   → Swahili question string.
+        task: One of ``"xnli"``, ``"xcsqa"``, ``"mgsm"``, ``"msvamp"``.
+
+    Returns:
+        A formatted prompt string ready for :func:`apply_chat_template`.
+    """
+    if task == "xnli":
+        parts = raw_query.split("\n", 1)
+        premise = parts[0]
+        hypothesis = parts[1] if len(parts) > 1 else ""
+        return (
+            "Determine the relationship between the premise and the hypothesis. "
+            "Respond with exactly one word: entailment, neutral, or contradiction.\n\n"
+            f"Premise: {premise}\n"
+            f"Hypothesis: {hypothesis}\n"
+            "Answer:"
+        )
+    if task == "xcsqa":
+        parts = raw_query.split("\n", 1)
+        stem = parts[0]
+        choice_lines = parts[1] if len(parts) > 1 else ""
+        return (
+            f"Question: {stem}\n"
+            f"Choices:\n{choice_lines}\n\n"
+            "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D, ...)."
+        )
+    # mgsm / msvamp
+    return f"{raw_query}\n\nLet's think step by step."
+
+
+def _build_chat_messages(raw_query: str, task: str) -> list[dict]:
+    """Return the system + user message list for :func:`apply_chat_template`.
+
+    Args:
+        raw_query: Raw query string from training JSONL.
+        task: Task identifier (see :func:`_build_user_prompt`).
+
+    Returns:
+        List of message dicts with ``role`` and ``content`` keys.
+    """
+    return [
+        {"role": "system", "content": _SYSTEM_MSGS[task]},
+        {"role": "user",   "content": _build_user_prompt(raw_query, task)},
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -395,8 +459,11 @@ def main(args, logger: logging.Logger) -> None:
     val_rows = rows[split_idx:]
     logger.info("Dataset split: train=%d, val=%d", len(train_rows), len(val_rows))
 
+    logger.info("Task: %s | prompt format: %s", args.task, _build_user_prompt("<query>", args.task)[:60])
+
     use_wandb = _init_wandb_or_disable(args, {
         "stage": "stage2_augmentation",
+        "task": args.task,
         "mt_path": args.mt_path,
         "llm_path": args.llm_path,
         "data_dir": args.data_dir,
@@ -468,7 +535,7 @@ def main(args, logger: logging.Logger) -> None:
             )
             formatted_query = [
                 tokenizer_llm.apply_chat_template(
-                    [{"role": "user", "content": q}],
+                    _build_chat_messages(q, args.task),
                     tokenize=False,
                     add_generation_prompt=True,
                 )
@@ -479,7 +546,7 @@ def main(args, logger: logging.Logger) -> None:
             )
             label_texts = [
                 tokenizer_llm.apply_chat_template(
-                    [{"role": "user", "content": q}, {"role": "assistant", "content": a}],
+                    _build_chat_messages(q, args.task) + [{"role": "assistant", "content": a}],
                     tokenize=False,
                     add_generation_prompt=False,
                 )[len(fq):]
@@ -529,7 +596,7 @@ def main(args, logger: logging.Logger) -> None:
                 )
                 formatted_query = [
                     tokenizer_llm.apply_chat_template(
-                        [{"role": "user", "content": q}],
+                        _build_chat_messages(q, args.task),
                         tokenize=False,
                         add_generation_prompt=True,
                     )
@@ -540,7 +607,7 @@ def main(args, logger: logging.Logger) -> None:
                 )
                 label_texts = [
                     tokenizer_llm.apply_chat_template(
-                        [{"role": "user", "content": q}, {"role": "assistant", "content": a}],
+                        _build_chat_messages(q, args.task) + [{"role": "assistant", "content": a}],
                         tokenize=False,
                         add_generation_prompt=False,
                     )[len(fq):]
@@ -588,6 +655,9 @@ def main(args, logger: logging.Logger) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 2: train the augmented mapping layer.")
+    parser.add_argument("--task", type=str, required=True,
+                        choices=["xnli", "xcsqa", "mgsm", "msvamp"],
+                        help="Task being trained; controls the LLM prompt format.")
     parser.add_argument("--stage1-mapping-ckpt", type=str, required=True,
                         help="Path to the Stage 1 pytorch_model.bin checkpoint.")
     parser.add_argument("--data-dir", type=str, required=True,
