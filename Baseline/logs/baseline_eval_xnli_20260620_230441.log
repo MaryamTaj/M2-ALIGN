@@ -1,0 +1,12 @@
+2026-06-20 23:04:41 | INFO | Task: xnli | Model: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b | Languages: ['sw'] | max_examples=None
+2026-06-20 23:08:26 | INFO | [xnli] lang=sw | 5010 examples
+2026-06-20 23:08:31 | INFO | lang=sw idx=0 | premise='Naam, sikukuwa nafikiri juu ya hilo, lakini nilichanganyikiwa sana, na, hatimaye' | raw_out='contradiction' | pred=contradiction | target=contradiction | ok=True
+2026-06-20 23:08:31 | INFO | lang=sw idx=1 | premise='Naam, sikukuwa nafikiri juu ya hilo, lakini nilichanganyikiwa sana, na, hatimaye' | raw_out='neutral' | pred=neutral | target=entailment | ok=False
+2026-06-20 23:08:31 | INFO | lang=sw idx=2 | premise='Naam, sikukuwa nafikiri juu ya hilo, lakini nilichanganyikiwa sana, na, hatimaye' | raw_out='neutral' | pred=neutral | target=neutral | ok=True
+2026-06-20 23:08:31 | INFO | lang=sw idx=3 | premise='Nami nilifikiri kwamba ilikuwa ni fursa, na bado, bado, nilikuwa pekee wa tisa m' | raw_out='neutral' | pred=neutral | target=neutral | ok=True
+2026-06-20 23:08:31 | INFO | lang=sw idx=4 | premise='Nami nilifikiri kwamba ilikuwa ni fursa, na bado, bado, nilikuwa pekee wa tisa m' | raw_out='entailment' | pred=entailment | target=entailment | ok=True
+2026-06-20 23:15:51 | INFO | [xnli] lang=sw accuracy=54.65%
+2026-06-20 23:15:51 | INFO | === XNLI Baseline Summary ===
+2026-06-20 23:15:51 | INFO |   sw       54.65%
+2026-06-20 23:15:51 | INFO |   Macro-avg (1 langs): 54.65%
+2026-06-20 23:15:51 | INFO |   Micro-avg (5010 examples): 54.65%

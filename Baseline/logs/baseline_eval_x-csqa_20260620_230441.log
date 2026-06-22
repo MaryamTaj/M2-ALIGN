@@ -1,0 +1,12 @@
+2026-06-20 23:04:41 | INFO | Task: x-csqa | Model: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b | Languages: ['sw'] | max_examples=None
+2026-06-20 23:08:25 | INFO | [x-csqa] lang=sw | 1000 examples
+2026-06-20 23:08:31 | INFO | lang=sw idx=0 | stem='Spout ya maji ilionekana baharini kwenye pwani ya nini?' | raw_out='D' | pred=D | target=C | ok=False
+2026-06-20 23:08:31 | INFO | lang=sw idx=1 | stem='Je! Ni sababu gani ya kawaida watu hufurahiya kucheza michezo?' | raw_out='B' | pred=B | target=D | ok=False
+2026-06-20 23:08:31 | INFO | lang=sw idx=2 | stem='Unaweza kufanya nini kushiriki kumbukumbu zako za kutembelea makumbusho?' | raw_out='C' | pred=C | target=D | ok=False
+2026-06-20 23:08:31 | INFO | lang=sw idx=3 | stem='Sam alipenda kulewa. Alifanya kwa nini?' | raw_out='B' | pred=B | target=E | ok=False
+2026-06-20 23:08:31 | INFO | lang=sw idx=4 | stem='Mtu huchukua mazoezi ya kuboresha kile wao' | raw_out='D' | pred=D | target=A | ok=False
+2026-06-20 23:09:40 | INFO | [x-csqa] lang=sw accuracy=34.90%
+2026-06-20 23:09:40 | INFO | === X-CSQA Baseline Summary ===
+2026-06-20 23:09:40 | INFO |   sw       34.90%
+2026-06-20 23:09:40 | INFO |   Macro-avg (1 langs): 34.90%
+2026-06-20 23:09:40 | INFO |   Micro-avg (1000 examples): 34.90%

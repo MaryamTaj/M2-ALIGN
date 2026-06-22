@@ -1,0 +1,12 @@
+2026-06-20 23:04:41 | INFO | Task: msvamp | Model: /scratch/tajm/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b | Languages: ['sw'] | max_examples=None
+2026-06-20 23:08:39 | INFO | [msvamp] lang=sw | 1000 examples
+2026-06-20 23:08:55 | INFO | lang=sw idx=0 | question='Julia alicheza mchezo wa kukimbiza na watoto 18 siku ya Jumatatu. Alicheza mchez' | raw_out='Sasa tafuta jibu kwa kutumia maelezo yoyote yaliyotajwa.\n\n**Maelezo:**\n- Julia alicheza mchezo wa kukimbiza **18 siku ya Jumatatu**.\n- Alicheza mchezo wa kukimbiza **10 siku ya Jumanne**.\n- Tunaonekan' | extracted='' | target=8.0 | ok=False
+2026-06-20 23:09:10 | INFO | lang=sw idx=1 | question='Julia alicheza mchezo wa kukimbiza na watoto 11 Jumatatu. Alicheza mchezo wa kuk' | raw_out='Sasa tafuta jibu kwa kutumia maelezo yoyote yaliyotajwa.\n\n**Maelezo:**\n- Jumatatu: Julia alicheza mchezo wa kukimbiza **na watoto 11**.\n- Jumanne: Julia alicheza mchezo wa kukimbiza **na watoto 12**.\n' | extracted='1' | target=1.0 | ok=True
+2026-06-20 23:09:17 | INFO | lang=sw idx=2 | question='Julia alicheza mchezo wa kukimbiza na watoto 5 siku ya Jumatatu. Alicheza mchezo' | raw_out='Let’s break this down step by step.\n\nWe are told:\n\n- Julia played a game with **5 children on Wednesday**.\n- She played a game with **other children on Thursday**.\n- In total, she played with **15 chi' | extracted='10' | target=10.0 | ok=True
+2026-06-20 23:09:32 | INFO | lang=sw idx=3 | question='Julia alicheza mchezo wa kukimbiza na watoto fulani siku ya Jumatatu. Alicheza n' | raw_out='Let’s break this down step by step.\n\nWe are told:\n\n- Julia played with a group of children on **Friday** (Jumatatu in Swahili).\n- She played with those same children on **Saturday** (Jumanne) for **14' | extracted='16' | target=2.0 | ok=False
+2026-06-20 23:09:41 | INFO | lang=sw idx=4 | question='Julia alicheza mchezo wa kukimbiza na watoto 16 siku ya Jumatatu. Ikiwa alicheza' | raw_out='Sasa, tafuta jibu kwa kutumia maelezo yoyote yaliyotolewa.\n\n**Maelezo:**\n- Julia alicheza mchezo wa kukimbiza **16 siku ya Jumatatu**.\n- Ikiwa alicheza **na watoto 12 zaidi siku ya Jumatatu kuliko sik' | extracted='4' | target=4.0 | ok=True
+2026-06-21 02:06:26 | INFO | [msvamp] lang=sw accuracy=60.60%
+2026-06-21 02:06:26 | INFO | === MSVAMP Baseline Summary ===
+2026-06-21 02:06:26 | INFO |   sw       60.60%
+2026-06-21 02:06:26 | INFO |   Macro-avg (1 langs): 60.60%
+2026-06-21 02:06:26 | INFO |   Micro-avg (1000 examples): 60.60%
