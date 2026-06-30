@@ -313,12 +313,15 @@ def build_math_nllb_text(question: str) -> str:
 
 def build_xcsqa_nllb_text(sample: dict) -> str:
     stem: str = sample["question"]["stem"]
-    texts: list[str] = sample["question"]["choices"]["text"]
-    return f"{stem}\n" + " ".join(texts)
+    choices_dict: dict = sample["question"]["choices"]
+    labels: list[str] = choices_dict["label"]
+    texts: list[str] = choices_dict["text"]
+    options_block = "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
+    return f"{stem}\n{options_block}"
 
 
 def build_xnli_nllb_text(sample: dict) -> str:
-    return f"{sample['premise']} {sample['hypothesis']}"
+    return f"{sample['premise']}\n{sample['hypothesis']}"
 
 
 # ─── Scoring ────────────────────────────────────────────────────────────────
