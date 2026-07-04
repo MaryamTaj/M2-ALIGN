@@ -11,15 +11,16 @@
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_text_EN_%x_%j.log
 
-# Usage:
+# Usage (x-csqa/xnli dropped for now, to match Stage3/evaluate_text.py --
+# standard XNLI has no Bengali config, "bg" is Bulgarian; INK-USC/xcsr has
+# the same gap):
 # sbatch --export=TASK=mgsm   evaluate_text.sh
 # sbatch --export=TASK=msvamp evaluate_text.sh
-# sbatch --export=TASK=xnli   evaluate_text.sh
-# sbatch --export=TASK=x-csqa evaluate_text.sh
 #
-# Optional overrides:
-#   sbatch --export=TASK=mgsm,LANGS=sw             evaluate_text.sh
-#   sbatch --export=TASK=xnli,LANGS="sw en zh"     evaluate_text.sh
+# Optional overrides (default langs are en, sw, bn — matching Stage 3a's
+# evaluation set):
+#   sbatch --export=TASK=mgsm,LANGS=bn              evaluate_text.sh
+#   sbatch --export=TASK=mgsm,LANGS="sw bn en"      evaluate_text.sh
 #   sbatch --export=TASK=mgsm,MAX_EXAMPLES=50       evaluate_text.sh
 
 set -euo pipefail

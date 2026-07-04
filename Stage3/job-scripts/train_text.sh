@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage2_train_LRL
+#SBATCH --job-name=stage3a_train_text
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,27 +9,30 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_train_LRL_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3a_train_text_%j.log
 
-# Usage: TASK=mgsm sbatch train.sh
-#   Supported tasks: mgsm, msvamp, xnli, xcsqa
-#   Reads data from Stage2/data/stage2/<task>/<task>.jsonl
-#   Saves checkpoint to Stage2/outputs/stage2/<task>/mapping/pytorch_model.bin
+# Usage: TASK=mgsm sbatch train_text.sh
+#   Supported tasks: mgsm, msvamp (xnli/xcsqa dropped for now — see
+#   Stage3/load_text.py)
+#   Reads data from Stage3/data/stage3a/<task>/<task>.jsonl
+#   Warm-starts from Stage 2's vision-mapping checkpoint (chained lineage:
+#   Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
+#   Saves checkpoint to Stage3/outputs/stage3a/<task>/mapping/pytorch_model.bin
 
 set -euo pipefail
 
 TASK="${TASK:-mgsm}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
-STAGE1="$PROJECT_ROOT/Stage1"
 STAGE2="$PROJECT_ROOT/Stage2"
+STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE1_MAPPING_CKPT="$STAGE1/outputs/M2-ALIGN/nllb_corpus/mapping/pytorch_model.bin"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
 
-DATA_DIR="$STAGE2/data/stage2/$TASK"
-OUTPUT_DIR="$STAGE2/outputs/stage2/$TASK"
+DATA_DIR="$STAGE3/data/stage3a/$TASK"
+OUTPUT_DIR="$STAGE3/outputs/stage3a/$TASK"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -92,25 +95,26 @@ if [ ! -d "$MT_PATH" ]; then
   echo "ERROR: MT snapshot path not found: $MT_PATH"
   exit 1
 fi
-if [ ! -f "$STAGE1_MAPPING_CKPT" ]; then
-  echo "ERROR: Stage 1 mapping checkpoint not found: $STAGE1_MAPPING_CKPT"
+if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
+  echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
+  echo "       Run Stage2/job-scripts/train_image.sh first."
   exit 1
 fi
 if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
   echo "ERROR: No .jsonl files found in DATA_DIR: $DATA_DIR"
-  echo "       Run: TASK=$TASK sbatch Stage2/job-scripts/load_data.sh"
+  echo "       Run: TASK=$TASK sbatch Stage3/job-scripts/load_text.sh"
   exit 1
 fi
 
-echo "=== Start Stage 2 training: $TASK ==="
+echo "=== Start Stage 3a training: $TASK ==="
 echo "DATA_DIR=$DATA_DIR"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
-echo "STAGE1_MAPPING_CKPT=$STAGE1_MAPPING_CKPT"
+echo "STAGE2_MAPPING_CKPT=$STAGE2_MAPPING_CKPT"
 echo
 cd "$PROJECT_ROOT"
-python -u Stage2/train.py \
+python -u Stage3/train_text.py \
   --task       "$TASK" \
-  --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
+  --init-mapping-ckpt "$STAGE2_MAPPING_CKPT" \
   --data-dir   "$DATA_DIR" \
   --output-dir "$OUTPUT_DIR" \
   --mt-path    "$MT_PATH" \
@@ -125,7 +129,7 @@ python -u Stage2/train.py \
   --use-wandb \
   --wandb-mode    offline \
   --wandb-project m2-align \
-  --wandb-run-name "stage2-$TASK" \
+  --wandb-run-name "stage3a-$TASK" \
   --local-files-only
 
 echo "=== Done ==="

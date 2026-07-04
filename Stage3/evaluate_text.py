@@ -1,17 +1,25 @@
-"""Stage 2 evaluation on text-only multilingual benchmarks.
+"""Stage 3a evaluation on text-only multilingual benchmarks.
 
 Loads the trained AugmentedMindMerger (NLLB encoder → mapping → frozen
 Qwen3-VL + LLM-side query prefix) and evaluates on the same text benchmarks
 as Baseline/evaluate_text.py.  Both the source-language text (via NLLB) and
 the chat-formatted task prompt (via the LLM tokenizer) are fed as the
-generation prefix, matching the Stage 2 training setup.
+generation prefix, matching the Stage 3a training setup.
+
+Run once right after Stage 3a training (reference point for the secondary
+hypothesis) and again after Stage 3b (VQA augmentation) to check for
+regression — see the Stage 3 plan for the before/after comparison.
 
 Supported tasks
 ---------------
 mgsm     – Multilingual Grade School Math    (juletxara/mgsm)
 msvamp   – Multilingual SVAMP               (Mathoctopus/MSVAMP)
-x-csqa   – Cross-lingual Commonsense QA     (INK-USC/xcsr)
-xnli     – Cross-lingual NLI                (xnli)
+
+x-csqa and xnli were dropped for now: standard XNLI's language list is
+ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg" is Bulgarian, not
+Bengali -- and INK-USC/xcsr (X-CSQA) has the same gap. Both were removed
+from Stage 3a training and evaluation entirely rather than relying on a
+substitute for one language only.
 """
 from __future__ import annotations
 
@@ -61,26 +69,14 @@ NLLB_CODES: dict[str, str] = {
 TASK_DEFAULT_LANGS: dict[str, list[str]] = {
     "mgsm":   ["de", "es", "fr", "ru", "zh", "ja", "th", "sw", "bn", "te", "en"],
     "msvamp": ["de", "es", "fr", "ru", "zh", "ja", "th", "sw", "bn", "en"],
-    "x-csqa": [
-        "ar", "de", "en", "es", "fr", "hi", "it", "ja",
-        "nl", "pl", "pt", "ru", "sw", "ur", "vi", "zh",
-    ],
-    "xnli": ["ar", "bg", "de", "el", "en", "es", "fr", "hi", "ru", "sw", "th", "tr", "ur", "vi", "zh"],
 }
 
 TASK_MAX_NEW_TOKENS: dict[str, int] = {
     "mgsm": 512,
     "msvamp": 512,
-    "x-csqa": 20,
-    "xnli": 20,
 }
 
-_MATH_SYSTEM  = "You are a helpful assistant that solves math problems step by step."
-_XCSQA_SYSTEM = "You are a helpful assistant that answers commonsense questions."
-_XNLI_SYSTEM  = "You are a helpful assistant that determines textual entailment."
-
-_XNLI_INT_TO_STR = {0: "entailment", 1: "neutral", 2: "contradiction"}
-_NLI_LABEL_STRINGS = ["entailment", "neutral", "contradiction"]
+_MATH_SYSTEM = "You are a helpful assistant that solves math problems step by step."
 
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -88,8 +84,8 @@ _NLI_LABEL_STRINGS = ["entailment", "neutral", "contradiction"]
 def setup_logging(log_dir: str, task: str) -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"stage2_eval_{task}_{timestamp}.log")
-    logger = logging.getLogger(f"stage2_eval_{task}")
+    log_path = os.path.join(log_dir, f"stage3a_eval_{task}_{timestamp}.log")
+    logger = logging.getLogger(f"stage3a_eval_{task}")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     logger.addHandler(logging.FileHandler(log_path, encoding="utf-8"))
@@ -251,28 +247,7 @@ def load_msvamp(lang: str) -> list[dict]:
     ]
 
 
-def load_xcsqa(lang: str) -> list[dict]:
-    config = f"X-CSQA-{lang}"
-    for split in ("validation", "test"):
-        try:
-            rows = _hf_load("INK-USC/xcsr", config, split)
-        except RuntimeError:
-            continue
-        if rows and str(rows[0].get("answerKey", "")).strip():
-            return rows
-    raise RuntimeError(f"Could not load X-CSQA for '{lang}' from INK-USC/xcsr.")
-
-
-def load_xnli(lang: str) -> list[dict]:
-    rows = _hf_load("xnli", lang, "test")
-    return [
-        {"premise": str(r["premise"]), "hypothesis": str(r["hypothesis"]),
-         "label": _XNLI_INT_TO_STR.get(int(r["label"]), "entailment")}
-        for r in rows
-    ]
-
-
-_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "x-csqa": load_xcsqa, "xnli": load_xnli}
+_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
 
 
 # ─── Prompt builders (identical to Baseline/evaluate_text.py) ───────────────
@@ -281,47 +256,10 @@ def build_math_prompt(question: str) -> str:
     return f"{question}\n\nLet's think step by step."
 
 
-def build_xcsqa_prompt(sample: dict) -> tuple[str, list[str]]:
-    stem: str = sample["question"]["stem"]
-    choices_dict: dict = sample["question"]["choices"]
-    labels: list[str] = choices_dict["label"]
-    texts: list[str] = choices_dict["text"]
-    choice_lines = "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
-    prompt = (
-        f"Question: {stem}\n"
-        f"Choices:\n{choice_lines}\n\n"
-        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D, ...)."
-    )
-    return prompt, labels
-
-
-def build_xnli_prompt(sample: dict) -> str:
-    return (
-        "Determine the relationship between the premise and the hypothesis. "
-        "Respond with exactly one word: entailment, neutral, or contradiction.\n\n"
-        f"Premise: {sample['premise']}\n"
-        f"Hypothesis: {sample['hypothesis']}\n"
-        "Answer:"
-    )
-
-
 # ─── NLLB text builders (raw source text for the MT encoder) ─────────────────
 
 def build_math_nllb_text(question: str) -> str:
     return question
-
-
-def build_xcsqa_nllb_text(sample: dict) -> str:
-    stem: str = sample["question"]["stem"]
-    choices_dict: dict = sample["question"]["choices"]
-    labels: list[str] = choices_dict["label"]
-    texts: list[str] = choices_dict["text"]
-    options_block = "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
-    return f"{stem}\n{options_block}"
-
-
-def build_xnli_nllb_text(sample: dict) -> str:
-    return f"{sample['premise']}\n{sample['hypothesis']}"
 
 
 # ─── Scoring ────────────────────────────────────────────────────────────────
@@ -347,20 +285,6 @@ def math_correct(pred_text: str, target: str) -> bool:
         return pred.strip() == target.strip()
 
 
-def classify_nli(text: str) -> str:
-    lower = text.lower()
-    for label in _NLI_LABEL_STRINGS:
-        if label in lower:
-            return label
-    return text.strip().lower()
-
-
-def classify_xcsqa(text: str, valid_letters: list[str]) -> str:
-    valid_set = set(valid_letters)
-    matches = [ch for ch in text if ch in valid_set]
-    return matches[-1] if matches else valid_letters[0]
-
-
 # ─── Summary logging ─────────────────────────────────────────────────────────
 
 def _log_summary(
@@ -374,7 +298,7 @@ def _log_summary(
         return
     macro = sum(results.values()) / len(results)
     micro = total_correct / total_examples * 100 if total_examples else 0.0
-    logger.info("=== %s Stage2 Summary ===", task.upper())
+    logger.info("=== %s Stage3a Summary ===", task.upper())
     for lang, acc in results.items():
         logger.info("  %-8s %.2f%%", lang, acc)
     logger.info("  Macro-avg (%d langs): %.2f%%", len(results), macro)
@@ -442,137 +366,14 @@ def evaluate_math(
     return results
 
 
-def evaluate_xcsqa(
-    langs: list[str],
-    model: AugmentedMindMerger,
-    tokenizer_mt: AutoTokenizer,
-    tokenizer_llm: AutoTokenizer,
-    device: torch.device,
-    amp_dtype: torch.dtype,
-    max_examples: int | None,
-    max_mt_seq_len: int,
-    max_llm_seq_len: int,
-    logger: logging.Logger,
-) -> dict[str, float]:
-    results: dict[str, float] = {}
-    total_correct_all = 0
-    total_all = 0
-
-    for lang in langs:
-        nllb_code = NLLB_CODES.get(lang)
-        if nllb_code is None:
-            logger.warning("No NLLB code for '%s'; skipping.", lang)
-            continue
-
-        samples = load_xcsqa(lang)
-        if max_examples is not None:
-            samples = samples[:max_examples]
-
-        correct = 0
-        logger.info("[x-csqa] lang=%s | %d examples", lang, len(samples))
-
-        for idx, sample in enumerate(tqdm(samples, desc=f"x-csqa/{lang}")):
-            prompt, valid_letters = build_xcsqa_prompt(sample)
-            nllb_text = build_xcsqa_nllb_text(sample)
-            raw_out = generate_text(
-                prompt, nllb_text, nllb_code, model, tokenizer_mt, tokenizer_llm,
-                device, amp_dtype, TASK_MAX_NEW_TOKENS["x-csqa"], max_mt_seq_len, max_llm_seq_len,
-                _XCSQA_SYSTEM,
-            )
-            pred = classify_xcsqa(raw_out, valid_letters)
-            raw_key = sample["answerKey"]
-            if isinstance(raw_key, int):
-                expected = chr(ord("A") + raw_key)
-            elif isinstance(raw_key, str) and raw_key.isdigit():
-                expected = chr(ord("A") + int(raw_key))
-            else:
-                expected = str(raw_key).upper()
-            ok = pred == expected
-            if ok:
-                correct += 1
-            if idx < 5:
-                logger.info(
-                    "lang=%s idx=%d | stem=%r | prompt=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["question"]["stem"][:80], prompt[:200], raw_out, pred, expected, ok,
-                )
-
-        acc = correct / len(samples) * 100 if samples else 0.0
-        results[lang] = acc
-        total_correct_all += correct
-        total_all += len(samples)
-        logger.info("[x-csqa] lang=%s accuracy=%.2f%%", lang, acc)
-
-    _log_summary("x-csqa", results, total_correct_all, total_all, logger)
-    return results
-
-
-def evaluate_nli(
-    task: str,
-    langs: list[str],
-    model: AugmentedMindMerger,
-    tokenizer_mt: AutoTokenizer,
-    tokenizer_llm: AutoTokenizer,
-    device: torch.device,
-    amp_dtype: torch.dtype,
-    max_examples: int | None,
-    max_mt_seq_len: int,
-    max_llm_seq_len: int,
-    logger: logging.Logger,
-) -> dict[str, float]:
-    loader = _LOADERS[task]
-    results: dict[str, float] = {}
-    total_correct_all = 0
-    total_all = 0
-
-    for lang in langs:
-        nllb_code = NLLB_CODES.get(lang)
-        if nllb_code is None:
-            logger.warning("No NLLB code for '%s'; skipping.", lang)
-            continue
-
-        samples = loader(lang)
-        if max_examples is not None:
-            samples = samples[:max_examples]
-
-        correct = 0
-        logger.info("[%s] lang=%s | %d examples", task, lang, len(samples))
-
-        for idx, sample in enumerate(tqdm(samples, desc=f"{task}/{lang}")):
-            prompt = build_xnli_prompt(sample)
-            nllb_text = build_xnli_nllb_text(sample)
-            raw_out = generate_text(
-                prompt, nllb_text, nllb_code, model, tokenizer_mt, tokenizer_llm,
-                device, amp_dtype, TASK_MAX_NEW_TOKENS[task], max_mt_seq_len, max_llm_seq_len,
-                _XNLI_SYSTEM,
-            )
-            pred = classify_nli(raw_out)
-            ok = pred == sample["label"]
-            if ok:
-                correct += 1
-            if idx < 5:
-                logger.info(
-                    "lang=%s idx=%d | premise=%r | prompt=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["premise"][:80], prompt[:200], raw_out, pred, sample["label"], ok,
-                )
-
-        acc = correct / len(samples) * 100 if samples else 0.0
-        results[lang] = acc
-        total_correct_all += correct
-        total_all += len(samples)
-        logger.info("[%s] lang=%s accuracy=%.2f%%", task, lang, acc)
-
-    _log_summary(task, results, total_correct_all, total_all, logger)
-    return results
-
-
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Stage 2 AugmentedMindMerger evaluation on multilingual text benchmarks."
+        description="Stage 3a AugmentedMindMerger evaluation on multilingual text benchmarks."
     )
     parser.add_argument(
-        "--task", required=True, choices=["mgsm", "msvamp", "x-csqa", "xnli"],
+        "--task", required=True, choices=["mgsm", "msvamp"],
         help="Benchmark to evaluate.",
     )
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
@@ -633,12 +434,7 @@ def main() -> None:
         logger=logger,
     )
 
-    if args.task in ("mgsm", "msvamp"):
-        evaluate_math(args.task, langs, **common_kw)
-    elif args.task == "x-csqa":
-        evaluate_xcsqa(langs, **common_kw)
-    elif args.task == "xnli":
-        evaluate_nli(args.task, langs, **common_kw)
+    evaluate_math(args.task, langs, **common_kw)
 
 
 if __name__ == "__main__":

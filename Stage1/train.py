@@ -482,6 +482,7 @@ if __name__ == "__main__":
         "Yoruba": "yor_Latn",
         "Wolof": "wol_Latn",
         "French": "fra_Latn",
+        "Bengali": "ben_Beng",
     }
     langs_map_m2m = {
         "English": "en", "Swahili": "sw", "Chinese": "zh", "Bengali": "bn",

@@ -1,0 +1,279 @@
+"""Baseline evaluation of raw Qwen3-VL 8B Instruct on multilingual VQA benchmarks.
+
+No NLLB encoder, no Mapping layer -- the image and the question (in its
+native low-resource language, exactly as fed to Stage 3b's `T` term) go
+straight into Qwen3-VL's own chat template. This is the "before" reference
+point for the primary hypothesis, parallel to how `Baseline/evaluate_text.py`
+already gives the raw-model reference point for text reasoning. Comparing
+this against Stage 2 (vision-mapping only, zero-shot) and the final
+Stage 3b checkpoint answers: does the mapping help at all beyond what
+Qwen3-VL can already do zero-shot in these languages?
+
+Supported benchmarks (same real/non-synthetic sources as Stage3/evaluate_vqa.py)
+--------------------------------------------------------------------------------
+xgqa           -- open-ended, English short answers. **Active language: Bengali.**
+worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
+                  deferred; neither covers Bengali, so nothing to run today)
+cvqa           -- multiple-choice, 4 options (Indonesian, Javanese -- deferred)
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+from datetime import datetime
+
+import requests
+import torch
+from PIL import Image
+from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from tqdm import tqdm
+
+MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
+
+_VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
+_VQA_MC_SYSTEM = "You are a helpful assistant that answers multiple-choice questions about images."
+
+
+def build_open_ended_prompt(question: str) -> str:
+    """Must match Stage3/evaluate_vqa.py's `build_open_ended_prompt` exactly."""
+    return f"Question: {question}\nAnswer with a single word or short phrase."
+
+
+def build_mc_prompt(question: str, choices: list[str]) -> str:
+    """Must match Stage3/evaluate_vqa.py's `build_mc_prompt` exactly."""
+    letters = [chr(ord("A") + i) for i in range(len(choices))]
+    choice_lines = "\n".join(f"{l}. {c}" for l, c in zip(letters, choices))
+    return (
+        f"Question: {question}\n"
+        f"Choices:\n{choice_lines}\n\n"
+        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D)."
+    )
+
+
+# ─── Logging ────────────────────────────────────────────────────────────────
+
+def setup_logging(log_dir: str, benchmark: str) -> logging.Logger:
+    os.makedirs(log_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    logger = logging.getLogger(f"baseline_eval_vqa_{benchmark}")
+    logger.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    fh = logging.FileHandler(os.path.join(log_dir, f"baseline_eval_vqa_{benchmark}_{ts}.log"))
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+    return logger
+
+
+# ─── Model loading ───────────────────────────────────────────────────────────
+
+def load_model(
+    model_id: str,
+    local_files_only: bool,
+) -> tuple[Qwen3VLForConditionalGeneration, AutoProcessor, torch.device]:
+    assert torch.cuda.is_available(), "CUDA not available - request a GPU node."
+    device = torch.device("cuda")
+    dtype = torch.bfloat16 if torch.cuda.get_device_capability(0)[0] >= 8 else torch.float16
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_id, torch_dtype=dtype, device_map="auto",
+        low_cpu_mem_usage=True, local_files_only=local_files_only,
+    )
+    processor = AutoProcessor.from_pretrained(model_id, local_files_only=local_files_only)
+    model.eval()
+    return model, processor, device
+
+
+# ─── Image resolution (same conventions as Stage3/evaluate_vqa.py) ─────────
+
+def load_image_by_id(images_dir: str, image_id: str) -> Image.Image | None:
+    for ext in (".jpg", ".jpeg", ".png"):
+        path = os.path.join(images_dir, f"{image_id}{ext}")
+        if os.path.exists(path):
+            try:
+                return Image.open(path).convert("RGB")
+            except Exception:
+                return None
+    return None
+
+
+def load_image_by_url(url: str, cache_dir: str) -> Image.Image | None:
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+    if os.path.exists(cache_path):
+        try:
+            return Image.open(cache_path).convert("RGB")
+        except Exception:
+            pass
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
+        resp.raise_for_status()
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        img.save(cache_path, format="JPEG", quality=85)
+        return img
+    except Exception:
+        return None
+
+
+# ─── Generation ─────────────────────────────────────────────────────────────
+
+@torch.inference_mode()
+def generate_answer(
+    image: Image.Image,
+    prompt: str,
+    system_message: str,
+    model: Qwen3VLForConditionalGeneration,
+    processor: AutoProcessor,
+    device: torch.device,
+    max_new_tokens: int,
+) -> str:
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": prompt},
+        ]},
+    ]
+    inputs = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True,
+        return_dict=True, return_tensors="pt",
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    prompt_len = inputs["input_ids"].shape[1]
+    generated_ids = model.generate(
+        **inputs, do_sample=False, max_new_tokens=max_new_tokens,
+        pad_token_id=processor.tokenizer.eos_token_id, eos_token_id=processor.tokenizer.eos_token_id,
+    )
+    gen_only = generated_ids[:, prompt_len:]
+    return processor.tokenizer.decode(gen_only[0], skip_special_tokens=True).strip()
+
+
+# ─── Scoring (identical to Stage3/evaluate_vqa.py) ─────────────────────────
+
+def normalize_answer(text: str) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[^\w\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def open_ended_correct(pred_text: str, target: str) -> bool:
+    return normalize_answer(pred_text) == normalize_answer(target)
+
+
+def classify_mc(text: str, n_choices: int) -> str:
+    valid = [chr(ord("A") + i) for i in range(n_choices)]
+    matches = [ch for ch in text if ch in valid]
+    return matches[0] if matches else valid[0]
+
+
+# ─── Evaluation loops ────────────────────────────────────────────────────────
+
+def evaluate_open_ended(
+    rows: list[dict], lang: str, image_resolver,
+    model, processor, device, max_examples: int | None, logger: logging.Logger,
+) -> float:
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    for idx, row in enumerate(tqdm(rows, desc=f"open-ended/{lang}")):
+        image = image_resolver(row)
+        if image is None:
+            continue
+        prompt = build_open_ended_prompt(row["query"])
+        pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
+        ok = open_ended_correct(pred, row["answer"])
+        correct += int(ok)
+        if idx < 5:
+            logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
+def evaluate_mc(
+    rows: list[dict], lang: str, image_resolver,
+    model, processor, device, max_examples: int | None, logger: logging.Logger,
+) -> float:
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    for idx, row in enumerate(tqdm(rows, desc=f"mc/{lang}")):
+        image = image_resolver(row)
+        if image is None:
+            continue
+        choices = row["choices"]
+        prompt = build_mc_prompt(row["query"], choices)
+        pred_text = generate_answer(image, prompt, _VQA_MC_SYSTEM, model, processor, device, max_new_tokens=8)
+        pred_letter = classify_mc(pred_text, len(choices))
+        target_letter = chr(ord("A") + int(row["answer_index"]))
+        ok = pred_letter == target_letter
+        correct += int(ok)
+        if idx < 5:
+            logger.info(
+                "idx=%d question=%r pred_text=%r pred=%s target=%s ok=%s",
+                idx, row["query"][:80], pred_text, pred_letter, target_letter, ok,
+            )
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
+# ─── Entry point ─────────────────────────────────────────────────────────────
+
+def _read_jsonl(path: str) -> list[dict]:
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Baseline Qwen3-VL evaluation on multilingual VQA benchmarks (no mapping layer)."
+    )
+    parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
+    parser.add_argument("--lang", required=True, help="ISO code (bn/id for xgqa; id/jv for worldcuisines/cvqa).")
+    parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_eval_data.py.")
+    parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
+    parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
+                        help="URL image cache dir (used for worldcuisines/cvqa).")
+    parser.add_argument("--model-id", default=MODEL_ID)
+    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--max-examples", type=int, default=None)
+    parser.add_argument("--smoke", action="store_true", help="Run 5 examples only.")
+    args = parser.parse_args()
+
+    if args.benchmark == "xgqa" and not args.images_dir:
+        parser.error("--images-dir is required for --benchmark xgqa")
+
+    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"), args.benchmark)
+    max_examples = 5 if args.smoke else args.max_examples
+
+    rows = _read_jsonl(args.eval_data)
+    logger.info("Loaded %d rows from %s", len(rows), args.eval_data)
+    logger.info("Model: %s | Benchmark: %s | Lang: %s", args.model_id, args.benchmark, args.lang)
+
+    model, processor, device = load_model(args.model_id, local_files_only=args.local_files_only)
+
+    if args.benchmark == "xgqa":
+        resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
+    else:
+        resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
+
+    if args.benchmark == "cvqa":
+        evaluate_mc(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+    else:
+        evaluate_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+
+
+if __name__ == "__main__":
+    main()

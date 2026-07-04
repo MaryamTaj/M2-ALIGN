@@ -1,12 +1,19 @@
 """Baseline evaluation of Qwen3-VL 8B Instruct on text-only multilingual benchmarks.
 
+No NLLB encoder, no Mapping layer -- this is the raw-model reference point
+for the secondary hypothesis, parallel to how Baseline/evaluate_vqa.py is
+the raw-model reference point for the primary (VQA) hypothesis. Compare
+against Stage 3a's evaluate_text.py numbers (same benchmarks, same
+languages) to see what the mapping/augmentation training actually buys.
+
 Supported tasks
 ---------------
 mgsm     – Multilingual Grade School Math    (juletxara/mgsm)
 msvamp   – Multilingual SVAMP               (Mathoctopus/MSVAMP)
-x-csqa   – Cross-lingual Commonsense QA     (INK-USC/xcsr)
-xnli     – Cross-lingual NLI                (xnli)
 
+x-csqa and xnli are not supported here (dropped to match Stage 3a): standard
+XNLI's language list is ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg"
+is Bulgarian, not Bengali -- and INK-USC/xcsr (X-CSQA) has the same gap.
 """
 from __future__ import annotations
 
@@ -24,26 +31,20 @@ from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
+# Default languages match Stage 3a's evaluation set: English as a
+# high-resource reference, Swahili and Bengali as the languages Stage 3a
+# actually trains/evaluates on.
 TASK_DEFAULT_LANGS: dict[str, list[str]] = {
-    "mgsm":   ["en"],
-    "msvamp": ["en"],
-    "x-csqa": ["en"],
-    "xnli":   ["en"],
+    "mgsm":   ["en", "sw", "bn"],
+    "msvamp": ["en", "sw", "bn"],
 }
 
 TASK_MAX_NEW_TOKENS: dict[str, int] = {
     "mgsm": 512,
     "msvamp": 512,
-    "x-csqa": 20,
-    "xnli": 20,
 }
 
-_MATH_SYSTEM  = "You are a helpful assistant that solves math problems step by step."
-_XCSQA_SYSTEM = "You are a helpful assistant that answers commonsense questions."
-_XNLI_SYSTEM  = "You are a helpful assistant that determines textual entailment."
-
-_XNLI_INT_TO_STR = {0: "entailment", 1: "neutral", 2: "contradiction"}
-_NLI_LABEL_STRINGS = ["entailment", "neutral", "contradiction"]
+_MATH_SYSTEM = "You are a helpful assistant that solves math problems step by step."
 
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -139,61 +140,16 @@ def load_msvamp(lang: str) -> list[dict]:
     ]
 
 
-def load_xcsqa(lang: str) -> list[dict]:
-    config = f"X-CSQA-{lang}"
-    for split in ("validation", "test"):
-        try:
-            rows = _hf_load("INK-USC/xcsr", config, split)
-        except RuntimeError:
-            continue
-        if rows and str(rows[0].get("answerKey", "")).strip():
-            return rows
-    raise RuntimeError(f"Could not load X-CSQA for '{lang}' from INK-USC/xcsr.")
+_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
 
 
-def load_xnli(lang: str) -> list[dict]:
-    rows = _hf_load("xnli", lang, "test")
-    return [
-        {"premise": str(r["premise"]), "hypothesis": str(r["hypothesis"]),
-         "label": _XNLI_INT_TO_STR.get(int(r["label"]), "entailment")}
-        for r in rows
-    ]
-
-
-_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "x-csqa": load_xcsqa, "xnli": load_xnli}
-
-
-# ─── Prompt builders (identical to Stage2/eval_multilingual.py) ─────────────
+# ─── Prompt builders (identical to Stage3/evaluate_text.py) ────────────────
 
 def build_math_prompt(question: str) -> str:
     return f"{question}\n\nLet's think step by step."
 
 
-def build_xcsqa_prompt(sample: dict) -> tuple[str, list[str]]:
-    stem: str = sample["question"]["stem"]
-    choices_dict: dict = sample["question"]["choices"]
-    labels: list[str] = choices_dict["label"]
-    texts: list[str] = choices_dict["text"]
-    choice_lines = "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
-    prompt = (
-        f"Question: {stem}\n"
-        f"Choices:\n{choice_lines}\n\n"
-        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D, ...)."
-    )
-    return prompt, labels
-
-
-def build_xnli_prompt(sample: dict) -> str:
-    return (
-        "Determine the relationship between the premise and the hypothesis. "
-        "Respond with exactly one word: entailment, neutral, or contradiction.\n\n"
-        f"Premise: {sample['premise']}\n"
-        f"Hypothesis: {sample['hypothesis']}\n"
-        "Answer:"
-    )
-
-
-# ─── Scoring (identical to Stage2/eval_multilingual.py) ────────────────────
+# ─── Scoring (identical to Stage3/evaluate_text.py) ────────────────────────
 
 def extract_math_answer(text: str) -> str | None:
     m = re.search(r"(?:the\s+)?answer\s+is[:\s]+(-?[\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
@@ -214,20 +170,6 @@ def math_correct(pred_text: str, target: str) -> bool:
         return float(pred) == float(target.replace(",", ""))
     except ValueError:
         return pred.strip() == target.strip()
-
-
-def classify_nli(text: str) -> str:
-    lower = text.lower()
-    for label in _NLI_LABEL_STRINGS:
-        if label in lower:
-            return label
-    return text.strip().lower()
-
-
-def classify_xcsqa(text: str, valid_letters: list[str]) -> str:
-    valid_set = set(valid_letters)
-    matches = [ch for ch in text if ch in valid_set]
-    return matches[-1] if matches else valid_letters[0]
 
 
 # ─── Evaluation loops ────────────────────────────────────────────────────────
@@ -295,101 +237,6 @@ def evaluate_math(
     return results
 
 
-def evaluate_xcsqa(
-    langs: list[str],
-    model: Qwen3VLForConditionalGeneration,
-    tokenizer: AutoTokenizer,
-    device: torch.device,
-    max_examples: int | None,
-    logger: logging.Logger,
-) -> dict[str, float]:
-    results: dict[str, float] = {}
-    total_correct_all = 0
-    total_all = 0
-
-    for lang in langs:
-        samples = load_xcsqa(lang)
-        if max_examples is not None:
-            samples = samples[:max_examples]
-
-        correct = 0
-        logger.info("[x-csqa] lang=%s | %d examples", lang, len(samples))
-
-        for idx, sample in enumerate(tqdm(samples, desc=f"x-csqa/{lang}")):
-            prompt, valid_letters = build_xcsqa_prompt(sample)
-            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS["x-csqa"], _XCSQA_SYSTEM)
-            pred = classify_xcsqa(raw_out, valid_letters)
-            raw_key = sample["answerKey"]
-            if isinstance(raw_key, int):
-                expected = chr(ord("A") + raw_key)
-            elif isinstance(raw_key, str) and raw_key.isdigit():
-                expected = chr(ord("A") + int(raw_key))
-            else:
-                expected = str(raw_key).upper()
-            ok = pred == expected
-            if ok:
-                correct += 1
-            if idx < 5:
-                logger.info(
-                    "lang=%s idx=%d | stem=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["question"]["stem"][:80], raw_out, pred, expected, ok,
-                )
-
-        acc = correct / len(samples) * 100 if samples else 0.0
-        results[lang] = acc
-        total_correct_all += correct
-        total_all += len(samples)
-        logger.info("[x-csqa] lang=%s accuracy=%.2f%%", lang, acc)
-
-    _log_summary("x-csqa", results, total_correct_all, total_all, logger)
-    return results
-
-
-def evaluate_nli(
-    task: str,
-    langs: list[str],
-    model: Qwen3VLForConditionalGeneration,
-    tokenizer: AutoTokenizer,
-    device: torch.device,
-    max_examples: int | None,
-    logger: logging.Logger,
-) -> dict[str, float]:
-    loader = _LOADERS[task]
-    results: dict[str, float] = {}
-    total_correct_all = 0
-    total_all = 0
-
-    for lang in langs:
-        samples = loader(lang)
-        if max_examples is not None:
-            samples = samples[:max_examples]
-
-        correct = 0
-        logger.info("[%s] lang=%s | %d examples", task, lang, len(samples))
-
-        for idx, sample in enumerate(tqdm(samples, desc=f"{task}/{lang}")):
-            prompt = build_xnli_prompt(sample)
-            raw_out = generate_text(prompt, model, tokenizer, device, TASK_MAX_NEW_TOKENS[task], _XNLI_SYSTEM)
-            pred = classify_nli(raw_out)
-            ok = pred == sample["label"]
-            if ok:
-                correct += 1
-            if idx < 5:
-                logger.info(
-                    "lang=%s idx=%d | premise=%r | raw_out=%r | pred=%s | target=%s | ok=%s",
-                    lang, idx, sample["premise"][:80], raw_out, pred, sample["label"], ok,
-                )
-
-        acc = correct / len(samples) * 100 if samples else 0.0
-        results[lang] = acc
-        total_correct_all += correct
-        total_all += len(samples)
-        logger.info("[%s] lang=%s accuracy=%.2f%%", task, lang, acc)
-
-    _log_summary(task, results, total_correct_all, total_all, logger)
-    return results
-
-
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -397,14 +244,14 @@ def main() -> None:
         description="Baseline Qwen3-VL evaluation on multilingual benchmarks (no mapping layer)."
     )
     parser.add_argument(
-        "--task", required=True, choices=["mgsm", "msvamp", "x-csqa", "xnli"],
+        "--task", required=True, choices=["mgsm", "msvamp"],
         help="Benchmark to evaluate.",
     )
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument(
         "--langs", nargs="+", default=None,
-        help="Language codes to evaluate (e.g. --langs sw en zh). Defaults to task default.",
+        help="Language codes to evaluate (e.g. --langs sw bn en). Defaults to task default.",
     )
     parser.add_argument(
         "--max-examples", type=int, default=None,
@@ -429,12 +276,7 @@ def main() -> None:
 
     model, tokenizer, device = load_model(args.model_id, local_files_only=args.local_files_only)
 
-    if args.task in ("mgsm", "msvamp"):
-        evaluate_math(args.task, langs, model, tokenizer, device, args.max_examples, logger)
-    elif args.task == "x-csqa":
-        evaluate_xcsqa(langs, model, tokenizer, device, args.max_examples, logger)
-    elif args.task == "xnli":
-        evaluate_nli(args.task, langs, model, tokenizer, device, args.max_examples, logger)
+    evaluate_math(args.task, langs, model, tokenizer, device, args.max_examples, logger)
 
 
 if __name__ == "__main__":

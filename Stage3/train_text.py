@@ -1,4 +1,15 @@
-"""Stage 2 augmentation training for AugmentedMindMerger."""
+"""Stage 3a augmentation training for AugmentedMindMerger (text reasoning).
+
+Continues training the Mapping layer from Stage 2's vision-mapping
+checkpoint on task-specific text data (mgsm/msvamp), appending the
+LLM-side query prompt `T`. This establishes the text-reasoning capability
+that Stage 3b (VQA augmentation) must not regress.
+
+xnli/xcsqa are not supported here: standard XNLI's language list is
+ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg" is Bulgarian, not
+Bengali -- and INK-USC/xcsr (X-CSQA) has the same gap. Both were dropped
+for now rather than relying on a substitute for one language only.
+"""
 from __future__ import annotations
 
 import argparse
@@ -31,12 +42,14 @@ NLLB_LANG_MAP = {
     "Yoruba": "yor_Latn",
     "Wolof": "wol_Latn",
     "French": "fra_Latn",
+    # Bengali is the Stage 3b VQA language; also trained here directly
+    # (math translated — see Stage3/load_text.py) so this stage is no
+    # longer Swahili-only.
+    "Bengali": "ben_Beng",
 }
 
 # Task-specific system messages — must match evaluate_text.py exactly.
 _SYSTEM_MSGS: dict[str, str] = {
-    "xnli":   "You are a helpful assistant that determines textual entailment.",
-    "xcsqa":  "You are a helpful assistant that answers commonsense questions.",
     "mgsm":   "You are a helpful assistant that solves math problems step by step.",
     "msvamp": "You are a helpful assistant that solves math problems step by step.",
 }
@@ -49,36 +62,13 @@ def _build_user_prompt(raw_query: str, task: str) -> str:
     training and evaluation see identical LLM inputs.
 
     Args:
-        raw_query: The ``query`` field from the training JSONL.  Format per task:
-            xnli   → ``"{premise}\\n{hypothesis}"``
-            xcsqa  → ``"{stem}\\nA. {c1}\\nB. {c2}..."``
-            math   → Swahili question string.
-        task: One of ``"xnli"``, ``"xcsqa"``, ``"mgsm"``, ``"msvamp"``.
+        raw_query: The ``query`` field from the training JSONL (target-language
+            math question).
+        task: One of ``"mgsm"``, ``"msvamp"``.
 
     Returns:
         A formatted prompt string ready for :func:`apply_chat_template`.
     """
-    if task == "xnli":
-        parts = raw_query.split("\n", 1)
-        premise = parts[0]
-        hypothesis = parts[1] if len(parts) > 1 else ""
-        return (
-            "Determine the relationship between the premise and the hypothesis. "
-            "Respond with exactly one word: entailment, neutral, or contradiction.\n\n"
-            f"Premise: {premise}\n"
-            f"Hypothesis: {hypothesis}\n"
-            "Answer:"
-        )
-    if task == "xcsqa":
-        parts = raw_query.split("\n", 1)
-        stem = parts[0]
-        choice_lines = parts[1] if len(parts) > 1 else ""
-        return (
-            f"Question: {stem}\n"
-            f"Choices:\n{choice_lines}\n\n"
-            "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D, ...)."
-        )
-    # mgsm / msvamp
     return f"{raw_query}\n\nLet's think step by step."
 
 
@@ -115,7 +105,7 @@ def setup_logging(log_dir: str) -> logging.Logger:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = os.path.join(log_dir, f"augmentation_{timestamp}.log")
 
-    logger = logging.getLogger("stage2_augmentation")
+    logger = logging.getLogger("stage3a_text_augmentation")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -185,7 +175,7 @@ def read_jsonl(path: str) -> list[dict]:
     return rows
 
 
-class Stage2Dataset(Dataset):
+class Stage3Dataset(Dataset):
     """Minimal PyTorch Dataset wrapper around a list of sample dicts.
 
     Args:
@@ -296,7 +286,7 @@ def collate_batch(batch: list[dict]) -> dict[str, list]:
     """Collate a list of sample dicts into a batched dict.
 
     Args:
-        batch: List of sample dicts from :class:`Stage2Dataset`.
+        batch: List of sample dicts from :class:`Stage3Dataset`.
 
     Returns:
         A dict with keys ``"query"``, ``"answer"``, and
@@ -429,11 +419,13 @@ def _init_wandb_or_disable(args, config: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def main(args, logger: logging.Logger) -> None:
-    """Run the Stage 2 augmentation training loop.
+    """Run the Stage 3a text-reasoning augmentation training loop.
 
     Loads English and optionally translated task-specialization data,
     builds an :class:`AugmentedMindMerger`, initialises its mapping from
-    a Stage 1 checkpoint, and trains with validation-based checkpointing.
+    Stage 2's vision-mapping checkpoint (chained lineage: Stage 1 →
+    Stage 2 → Stage 3a → Stage 3b), and trains with validation-based
+    checkpointing.
 
     Args:
         args: Parsed argument namespace.
@@ -442,7 +434,7 @@ def main(args, logger: logging.Logger) -> None:
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type != "cuda":
-        raise RuntimeError("Stage2 augmentation expects CUDA.")
+        raise RuntimeError("Stage 3a augmentation expects CUDA.")
 
     jsonl_files = sorted(glob.glob(os.path.join(args.data_dir, "*.jsonl")))
     if not jsonl_files:
@@ -462,7 +454,7 @@ def main(args, logger: logging.Logger) -> None:
     logger.info("Task: %s | prompt format: %s", args.task, _build_user_prompt("<query>", args.task)[:60])
 
     use_wandb = _init_wandb_or_disable(args, {
-        "stage": "stage2_augmentation",
+        "stage": "stage3a_text_augmentation",
         "task": args.task,
         "mt_path": args.mt_path,
         "llm_path": args.llm_path,
@@ -495,23 +487,23 @@ def main(args, logger: logging.Logger) -> None:
         local_files_only=args.local_files_only,
     ).to(device)
 
-    if args.stage1_mapping_ckpt:
-        ckpt = torch.load(args.stage1_mapping_ckpt, map_location="cpu")
+    if args.init_mapping_ckpt:
+        ckpt = torch.load(args.init_mapping_ckpt, map_location="cpu")
         model.mapping.load_state_dict(ckpt["model_state_dict"], strict=False)
-        logger.info("Loaded Stage 1 mapping: %s", args.stage1_mapping_ckpt)
+        logger.info("Initialised mapping from: %s", args.init_mapping_ckpt)
 
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr
     )
 
     train_loader = DataLoader(
-        Stage2Dataset(train_rows),
+        Stage3Dataset(train_rows),
         batch_size=args.train_batch_size,
         shuffle=True,
         collate_fn=collate_batch,
     )
     val_loader = DataLoader(
-        Stage2Dataset(val_rows),
+        Stage3Dataset(val_rows),
         batch_size=args.eval_batch_size,
         shuffle=False,
         collate_fn=collate_batch,
@@ -654,12 +646,14 @@ def main(args, logger: logging.Logger) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Stage 2: train the augmented mapping layer.")
+    parser = argparse.ArgumentParser(description="Stage 3a: train the text-reasoning augmented mapping layer.")
     parser.add_argument("--task", type=str, required=True,
-                        choices=["xnli", "xcsqa", "mgsm", "msvamp"],
+                        choices=["mgsm", "msvamp"],
                         help="Task being trained; controls the LLM prompt format.")
-    parser.add_argument("--stage1-mapping-ckpt", type=str, required=True,
-                        help="Path to the Stage 1 pytorch_model.bin checkpoint.")
+    parser.add_argument("--init-mapping-ckpt", type=str, required=True,
+                        help="Path to the checkpoint to warm-start from — "
+                             "Stage 2's vision-mapping pytorch_model.bin "
+                             "(chained lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b).")
     parser.add_argument("--data-dir", type=str, required=True,
                         help="Directory containing translated *.jsonl training files.")
     parser.add_argument("--output-dir", type=str, required=True,
@@ -677,7 +671,7 @@ if __name__ == "__main__":
     parser.add_argument("--val-ratio", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--use-wandb", action="store_true")
-    parser.add_argument("--wandb-project", type=str, default="mindmerger-stage2")
+    parser.add_argument("--wandb-project", type=str, default="mindmerger-stage3a")
     parser.add_argument("--wandb-run-name", type=str, default="")
     parser.add_argument("--wandb-mode", type=str, default="auto")
     parser.add_argument("--wandb-init-timeout", type=int, default=90)
