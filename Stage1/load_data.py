@@ -60,7 +60,7 @@ def download_language(
         raise ValueError(f"Unknown language {source_lang!r}; allowed: {sorted(LANG_TO_NLLB)}")
 
     source_code = LANG_TO_NLLB[source_lang]
-    config = f"{NLLB_ENGLISH}-{source_code}"
+    config = "-".join(sorted([NLLB_ENGLISH, source_code]))
 
     logger.info("Loading NLLB config=%s split=%s target=%d samples", config, split, n_samples)
     ds = load_dataset("allenai/nllb", config, split=split, streaming=streaming)
