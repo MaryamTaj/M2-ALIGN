@@ -177,13 +177,17 @@ def _extract_lang_entries(row: dict, wanted_langs: set[str]) -> dict[str, dict]:
     """Map each wanted language code to its ``wit_features`` entry, if present.
 
     A row is one image; ``wit_features`` holds one entry per Wikipedia
-    language edition that captioned it. Keeps the first match per language.
+    language edition that captioned it. ``datasets`` stores a Sequence of a
+    struct feature in columnar form — i.e. ``wit_features`` is a dict
+    mapping field name to a list of per-entry values, not a list of dicts —
+    so entries are reconstructed by index. Keeps the first match per language.
     """
+    feats = row.get("wit_features") or {}
+    languages = feats.get("language") or []
     found: dict[str, dict] = {}
-    for feat in row.get("wit_features") or []:
-        lang = feat.get("language")
+    for i, lang in enumerate(languages):
         if lang in wanted_langs and lang not in found:
-            found[lang] = feat
+            found[lang] = {key: values[i] for key, values in feats.items()}
     return found
 
 
