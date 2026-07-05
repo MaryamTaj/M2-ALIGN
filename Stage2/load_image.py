@@ -153,13 +153,16 @@ def _build_caption_text(ref: str | None) -> str | None:
     is frequently left in English even when *ref* is in the target
     language — including it would glue an English sentence onto an
     otherwise non-English caption_text.
+
+    No terminal punctuation is added: many scripts (Bengali/Hindi ``।``,
+    CJK ``。``, ...) don't end sentences with a Latin period, and forcing
+    one on — or worse, appending it after an existing non-Latin terminator
+    — introduces an artifact not present in the source language. Whatever
+    punctuation (or lack of it) the reference caption has is kept as-is.
     """
     if not ref or not ref.strip():
         return None
-    r = ref.strip()
-    if r[-1] not in ".!?":
-        r += "."
-    return r
+    return ref.strip()
 
 
 # Columns we actually read. ``image`` (JPEG bytes) and ``embedding`` (a
