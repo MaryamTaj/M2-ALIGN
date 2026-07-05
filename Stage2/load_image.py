@@ -162,6 +162,13 @@ def _build_caption_text(ref: str | None) -> str | None:
     return r
 
 
+# Columns we actually read. ``image`` (JPEG bytes) and ``embedding`` (a
+# 2048-d float64 vector per row) make up most of each row's payload but are
+# never used here, so they're pruned before streaming to cut bandwidth and
+# time on a ~6.5M-row pass.
+_WIT_BASE_COLUMNS = ["image_url", "caption_attribution_description", "wit_features"]
+
+
 def _load_wit_base(logger: logging.Logger):
     """Stream the full ``wikimedia/wit_base`` dataset (parquet, no script).
 
@@ -169,8 +176,9 @@ def _load_wit_base(logger: logging.Logger):
     ``datasets>=4.0`` removed script execution (``trust_remote_code`` is no
     longer honoured), so ``google/WIT`` can no longer be loaded at all.
     """
-    logger.info("Streaming wikimedia/wit_base...")
-    return load_dataset("wikimedia/wit_base", split="train", streaming=True)
+    logger.info("Streaming wikimedia/wit_base (columns: %s)...", _WIT_BASE_COLUMNS)
+    ds = load_dataset("wikimedia/wit_base", split="train", streaming=True)
+    return ds.select_columns(_WIT_BASE_COLUMNS)
 
 
 def _extract_lang_entries(row: dict, wanted_langs: set[str]) -> dict[str, dict]:
@@ -217,7 +225,10 @@ def build_language_pairs(
 
     Args:
         lang_codes: ISO 639-1 codes to collect (must be keys of :data:`WIT_TO_NLLB`).
-        n_per_language: Target number of output pairs per language.
+        n_per_language: Target number of output pairs per language. A
+            value <= 0 means "no cap" — collect every image that has both
+            a target-language and an English caption, streaming the whole
+            dataset, and skip the down-sampling step.
         seed: Random seed for sampling.
         logger: Logger instance.
 
@@ -227,8 +238,9 @@ def build_language_pairs(
     wanted = set(lang_codes) | {"en"}
     ds = _load_wit_base(logger)
 
+    unlimited = n_per_language <= 0
     collected: dict[str, list[dict]] = {code: [] for code in lang_codes}
-    overcollect = n_per_language * 3
+    overcollect = None if unlimited else n_per_language * 3
     done: set[str] = set()
 
     for row in ds:
@@ -266,12 +278,16 @@ def build_language_pairs(
                 "nllb_lang_tag": WIT_TO_NLLB[code],
             })
             # Over-collect then sample to get a random subset, not just the first N.
-            if len(collected[code]) >= overcollect:
+            if overcollect is not None and len(collected[code]) >= overcollect:
                 done.add(code)
 
     sampled: dict[str, list[dict]] = {}
     for code in lang_codes:
         pairs = collected[code]
+        if unlimited:
+            sampled[code] = pairs
+            logger.info("  %s: %d pairs found (unlimited, no sampling)", WIT_CODE_TO_NAME[code], len(pairs))
+            continue
         n = min(n_per_language, len(pairs))
         sampled[code] = random.Random(seed).sample(pairs, n)
         logger.info("  %s: %d pairs found → sampled %d", WIT_CODE_TO_NAME[code], len(pairs), n)
@@ -422,7 +438,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--n-per-language", type=int, default=50_000,
-        help="Target number of image-caption pairs per language.",
+        help=(
+            "Target number of image-caption pairs per language. Pass 0 (or "
+            "negative) to collect every image with both a target-language "
+            "and an English caption, with no cap and no down-sampling."
+        ),
     )
     parser.add_argument("--output-dir", type=str, default="./data")
     parser.add_argument("--seed", type=int, default=42)
