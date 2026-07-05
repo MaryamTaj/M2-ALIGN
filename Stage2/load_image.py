@@ -34,9 +34,14 @@ import json
 import logging
 import os
 import random
+import time
 from datetime import datetime
 
 from datasets import load_dataset
+
+# How often (in rows scanned) to log progress / persist a checkpoint.
+PROGRESS_EVERY = 20_000
+CHECKPOINT_EVERY = 50_000
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +215,84 @@ def _write_jsonl(path: str, rows: list[dict], logger: logging.Logger) -> None:
     logger.info("Wrote %d rows → %s", len(rows), path)
 
 
+def _checkpoint_path(output_dir: str, lang_codes: list[str]) -> str:
+    tag = "-".join(sorted(lang_codes))
+    return os.path.join(output_dir, f".checkpoint_{tag}.json")
+
+
+def _save_checkpoint(
+    path: str,
+    ds_state: dict,
+    collected: dict[str, list[dict]],
+    scanned: int,
+    logger: logging.Logger,
+) -> None:
+    """Overwrite the checkpoint with the current position and results so far.
+
+    Written to a temp file and atomically renamed so a crash mid-write can't
+    leave a corrupt/partial checkpoint behind.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"ds_state": ds_state, "collected": collected, "scanned": scanned}, f)
+    os.replace(tmp, path)
+    logger.info(
+        "Checkpoint saved: %d rows scanned | %s",
+        scanned, {k: len(v) for k, v in collected.items()},
+    )
+
+
+def _load_checkpoint(path: str) -> dict | None:
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _stream_rows(ds_factory, resume_state: dict | None, logger: logging.Logger):
+    """Iterate rows from a streaming dataset, automatically reconnecting and
+    resuming from the last successfully read row if the connection drops.
+
+    ``ds_factory`` rebuilds the ``IterableDataset`` from scratch -- once an
+    iterator raises, it can't be resumed in place, so a fresh one is opened
+    on every reconnect. ``ds.state_dict()`` is pure in-memory bookkeeping (no
+    network I/O), so it's captured after every row: a mid-stream error loses
+    at most the one row in flight, not a whole checkpoint interval. The
+    on-disk checkpoint the caller writes periodically is a separate,
+    coarser safety net for when the *process itself* dies (OOM, kill,
+    lost SSH session without nohup/tmux) -- this generator only handles
+    the connection dropping while the process stays alive.
+    """
+    ds = ds_factory()
+    if resume_state:
+        ds.load_state_dict(resume_state)
+    it = iter(ds)
+    last_state = resume_state
+    attempt = 0
+    while True:
+        try:
+            row = next(it)
+        except StopIteration:
+            return
+        except Exception as exc:
+            attempt += 1
+            wait = min(60, 2 ** attempt)
+            logger.warning(
+                "Stream error (attempt %d): %s -- reconnecting in %ds",
+                attempt, exc, wait,
+            )
+            time.sleep(wait)
+            ds = ds_factory()
+            if last_state:
+                ds.load_state_dict(last_state)
+            it = iter(ds)
+            continue
+        attempt = 0
+        last_state = ds.state_dict()
+        yield row, last_state
+
+
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
@@ -219,12 +302,21 @@ def build_language_pairs(
     n_per_language: int,
     seed: int,
     logger: logging.Logger,
+    output_dir: str,
 ) -> dict[str, list[dict]]:
     """Single pass over WIT: emit English-paired rows for every requested language.
 
     Each row already carries every language's caption for that image, so all
     target languages are collected in one stream instead of one stream per
     language.
+
+    Progress is logged every :data:`PROGRESS_EVERY` rows, and a resumable
+    checkpoint (rows scanned, pairs collected so far, and the stream's own
+    read position) is written to *output_dir* every :data:`CHECKPOINT_EVERY`
+    rows. If a checkpoint from a previous, interrupted run is found, this
+    resumes from it instead of starting over. Dropped connections mid-stream
+    are retried automatically (see :func:`_stream_rows`); the on-disk
+    checkpoint only matters if the whole process dies.
 
     Args:
         lang_codes: ISO 639-1 codes to collect (must be keys of :data:`WIT_TO_NLLB`).
@@ -234,21 +326,48 @@ def build_language_pairs(
             dataset, and skip the down-sampling step.
         seed: Random seed for sampling.
         logger: Logger instance.
+        output_dir: Directory to write the checkpoint file into.
 
     Returns:
         Dict mapping language code to its list of paired dicts.
     """
     wanted = set(lang_codes) | {"en"}
-    ds = _load_wit_base(logger)
+
+    ckpt_path = _checkpoint_path(output_dir, lang_codes)
+    ckpt = _load_checkpoint(ckpt_path)
+    if ckpt:
+        collected: dict[str, list[dict]] = ckpt["collected"]
+        scanned = ckpt["scanned"]
+        resume_state = ckpt["ds_state"]
+        logger.info(
+            "Resuming from checkpoint: %d rows already scanned | %s",
+            scanned, {k: len(v) for k, v in collected.items()},
+        )
+    else:
+        collected = {code: [] for code in lang_codes}
+        scanned = 0
+        resume_state = None
 
     unlimited = n_per_language <= 0
-    collected: dict[str, list[dict]] = {code: [] for code in lang_codes}
     overcollect = None if unlimited else n_per_language * 3
-    done: set[str] = set()
+    done: set[str] = {
+        code for code in lang_codes
+        if overcollect is not None and len(collected[code]) >= overcollect
+    }
 
-    for row in ds:
+    for row, ds_state in _stream_rows(lambda: _load_wit_base(logger), resume_state, logger):
         if len(done) == len(lang_codes):
             break
+        scanned += 1
+
+        if scanned % PROGRESS_EVERY == 0:
+            logger.info(
+                "Scanned %d rows | %s",
+                scanned, {code: len(collected[code]) for code in lang_codes},
+            )
+        if scanned % CHECKPOINT_EVERY == 0:
+            _save_checkpoint(ckpt_path, ds_state, collected, scanned, logger)
+
         url = row.get("image_url")
         if not url:
             continue
@@ -283,6 +402,10 @@ def build_language_pairs(
             # Over-collect then sample to get a random subset, not just the first N.
             if overcollect is not None and len(collected[code]) >= overcollect:
                 done.add(code)
+
+    if os.path.exists(ckpt_path):
+        os.remove(ckpt_path)
+        logger.info("Scan complete -- checkpoint removed.")
 
     sampled: dict[str, list[dict]] = {}
     for code in lang_codes:
@@ -378,17 +501,21 @@ def print_coverage_table(
         logger: Logger instance.
     """
     wanted = set(lang_codes) | {"en"}
-    ds = _load_wit_base(logger)
 
     total = {code: 0 for code in lang_codes}
     paired = {code: 0 for code in lang_codes}
     seen: dict[str, set[str]] = {code: set() for code in lang_codes}
 
     scanned = 0
-    for row in ds:
+    for row, _ds_state in _stream_rows(lambda: _load_wit_base(logger), None, logger):
         scanned += 1
         if scanned > max_rows:
             break
+        if scanned % PROGRESS_EVERY == 0:
+            logger.info(
+                "Scanned %d / %d rows | %s",
+                scanned, max_rows, {code: paired[code] for code in lang_codes},
+            )
         url = row.get("image_url")
         if not url:
             continue
@@ -488,7 +615,9 @@ def main() -> None:
         analyze_attribution_script(lang_codes, args.max_rows, logger)
         return
 
-    pairs_by_lang = build_language_pairs(lang_codes, args.n_per_language, args.seed, logger)
+    pairs_by_lang = build_language_pairs(
+        lang_codes, args.n_per_language, args.seed, logger, args.output_dir,
+    )
 
     all_rows: list[dict] = [row for rows in pairs_by_lang.values() for row in rows]
     random.Random(args.seed).shuffle(all_rows)
