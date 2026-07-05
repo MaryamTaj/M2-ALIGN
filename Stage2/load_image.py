@@ -2,12 +2,18 @@
 
 Strategy
 --------
-For each target language we load that language's WIT subset and the English
-subset, join on ``image_url`` (a Wikimedia Commons URL that is
-language-agnostic), and emit paired rows:
+``wikimedia/wit_base`` (the parquet-native mirror of Google's WIT dataset)
+dedupes rows by image: each row's ``wit_features`` list already holds the
+per-language caption entries for that one image. So the English/target-
+language join is free — for each row we just look up the "en" entry and the
+target-language entry and, if both exist, emit a pair:
 
-    caption_text   = ref_desc + " " + attr_desc   (WIT paper: best field combo)
+    caption_text   = ref_desc for the target language
     target_caption = English ref_desc for the same image
+
+``caption_attribution_description`` is excluded from caption_text: it's
+shared per image (not per language) in wikimedia/wit_base and is often
+left in English regardless of which language's ref_desc is used.
 
 Output JSONL fields per row:
     id, image_url, caption_text, target_caption,
@@ -15,10 +21,10 @@ Output JSONL fields per row:
 
 Usage
 -----
-    python load_wit_data.py \\
+    python load_image.py \\
         --languages fr,de,zh,ar,hi,sw \\
         --n-per-language 50000 \\
-        --output-dir ./data/wit
+        --output-dir ./data
 """
 from __future__ import annotations
 
@@ -80,6 +86,22 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "bn": "Bengali",
 }
 
+# Unicode block ranges keyed by the script suffix of the NLLB tag (e.g.
+# "ben_Beng" -> "Beng"). Only scripts visually distinguishable from Latin
+# are listed: for *_Latn languages (de, es, fr, hr, hu, it, nl, pl, pt, ro,
+# sw, tr, vi) script alone can't tell target-language text apart from
+# English attribution text, so those are left unchecked.
+SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
+    "Arab": [(0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF)],
+    "Cyrl": [(0x0400, 0x04FF)],
+    "Grek": [(0x0370, 0x03FF)],
+    "Deva": [(0x0900, 0x097F)],
+    "Beng": [(0x0980, 0x09FF)],
+    "Hang": [(0xAC00, 0xD7A3)],
+    "Jpan": [(0x3040, 0x30FF), (0x4E00, 0x9FFF)],
+    "Hans": [(0x4E00, 0x9FFF)],
+}
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -104,45 +126,65 @@ def setup_logging(log_dir: str) -> logging.Logger:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _build_caption_text(ref: str | None, attr: str | None) -> str | None:
-    """Concatenate reference + attribution with period separation.
+def _script_for_lang(lang_code: str) -> str | None:
+    """NLLB script suffix for *lang_code* (e.g. 'bn' -> 'Beng'), or None if
+    it's a Latin-script language whose script can't distinguish target-
+    language text from English attribution text."""
+    script = WIT_TO_NLLB[lang_code].split("_")[1]
+    return script if script in SCRIPT_RANGES else None
 
-    Per WIT paper: ref + attr gives the strongest image-text alignment.
-    We use period-space rather than newline or bare space so that NLLB
-    sees two complete sentences — matching the sentence-level parallel
-    text it was trained on — rather than one run-on fragment.
-    Labeled prefixes ("Reference:", "Attribution:") are intentionally
-    avoided: they inject English tokens into otherwise non-English text
-    and confuse NLLB's language detection.
-    Falls back to whichever field is non-null.
+
+def _is_in_script(text: str, script: str, threshold: float = 0.5) -> bool:
+    """True if at least *threshold* of *text*'s alphabetic characters fall
+    within the Unicode ranges for *script*."""
+    ranges = SCRIPT_RANGES[script]
+    alpha = [c for c in text if c.isalpha()]
+    if not alpha:
+        return False
+    in_script = sum(1 for c in alpha if any(lo <= ord(c) <= hi for lo, hi in ranges))
+    return (in_script / len(alpha)) >= threshold
+
+
+def _build_caption_text(ref: str | None) -> str | None:
+    """Return the cleaned reference description as caption_text.
+
+    ``caption_attribution_description`` is intentionally excluded: in
+    wikimedia/wit_base it's shared per image rather than per language, and
+    is frequently left in English even when *ref* is in the target
+    language — including it would glue an English sentence onto an
+    otherwise non-English caption_text.
     """
-    parts = []
-    if ref and ref.strip():
-        r = ref.strip()
-        if r[-1] not in ".!?":
-            r += "."
-        parts.append(r)
-    if attr and attr.strip():
-        a = attr.strip()
-        if a[-1] not in ".!?":
-            a += "."
-        parts.append(a)
-    return " ".join(parts) if parts else None
+    if not ref or not ref.strip():
+        return None
+    r = ref.strip()
+    if r[-1] not in ".!?":
+        r += "."
+    return r
 
 
-def _load_wit_subset(lang_code: str, logger: logging.Logger):
-    """Load the WIT subset for *lang_code*, trying config-based access first."""
-    try:
-        ds = load_dataset("google/WIT", lang_code, split="train", streaming=True,
-                          trust_remote_code=True)
-        logger.info("Loaded WIT with config=%r", lang_code)
-        return ds
-    except Exception:
-        pass
-    # Fall back: full dataset filtered by language field
-    logger.info("Config-based load failed; streaming full dataset and filtering for lang=%r", lang_code)
-    ds = load_dataset("google/WIT", split="train", streaming=True, trust_remote_code=True)
-    return ds.filter(lambda x: x.get("language") == lang_code)
+def _load_wit_base(logger: logging.Logger):
+    """Stream the full ``wikimedia/wit_base`` dataset (parquet, no script).
+
+    Replaces ``google/WIT``, whose Hub repo only ships a loading script;
+    ``datasets>=4.0`` removed script execution (``trust_remote_code`` is no
+    longer honoured), so ``google/WIT`` can no longer be loaded at all.
+    """
+    logger.info("Streaming wikimedia/wit_base...")
+    return load_dataset("wikimedia/wit_base", split="train", streaming=True)
+
+
+def _extract_lang_entries(row: dict, wanted_langs: set[str]) -> dict[str, dict]:
+    """Map each wanted language code to its ``wit_features`` entry, if present.
+
+    A row is one image; ``wit_features`` holds one entry per Wikipedia
+    language edition that captioned it. Keeps the first match per language.
+    """
+    found: dict[str, dict] = {}
+    for feat in row.get("wit_features") or []:
+        lang = feat.get("language")
+        if lang in wanted_langs and lang not in found:
+            found[lang] = feat
+    return found
 
 
 def _write_jsonl(path: str, rows: list[dict], logger: logging.Logger) -> None:
@@ -157,93 +199,137 @@ def _write_jsonl(path: str, rows: list[dict], logger: logging.Logger) -> None:
 # Core logic
 # ---------------------------------------------------------------------------
 
-def build_english_index(
-    index_size: int,
-    logger: logging.Logger,
-) -> dict[str, str]:
-    """Stream the English WIT subset and build image_url → caption index.
-
-    Args:
-        index_size: Maximum number of English entries to index.
-        logger: Logger instance.
-
-    Returns:
-        Dict mapping ``image_url`` to the English ``caption_reference_description``.
-    """
-    logger.info("Streaming English WIT to build image_url index (max %d)...", index_size)
-    ds_en = _load_wit_subset("en", logger)
-
-    index: dict[str, str] = {}
-    for row in ds_en:
-        url = row.get("image_url")
-        caption = row.get("caption_reference_description")
-        if url and caption and caption.strip():
-            index[url] = caption.strip()
-        if len(index) >= index_size:
-            break
-
-    logger.info("English index: %d entries", len(index))
-    return index
-
-
-def load_language_pairs(
-    lang_code: str,
-    english_index: dict[str, str],
-    n_samples: int,
+def build_language_pairs(
+    lang_codes: list[str],
+    n_per_language: int,
     seed: int,
     logger: logging.Logger,
-) -> list[dict]:
-    """Stream WIT for *lang_code*, join with English index, return paired rows.
+) -> dict[str, list[dict]]:
+    """Single pass over WIT: emit English-paired rows for every requested language.
+
+    Each row already carries every language's caption for that image, so all
+    target languages are collected in one stream instead of one stream per
+    language.
 
     Args:
-        lang_code: ISO 639-1 code (must be a key in :data:`WIT_TO_NLLB`).
-        english_index: Dict from :func:`build_english_index`.
-        n_samples: Target number of output pairs for this language.
+        lang_codes: ISO 639-1 codes to collect (must be keys of :data:`WIT_TO_NLLB`).
+        n_per_language: Target number of output pairs per language.
         seed: Random seed for sampling.
         logger: Logger instance.
 
     Returns:
-        List of paired dicts ready for JSONL serialisation.
+        Dict mapping language code to its list of paired dicts.
     """
-    lang_name = WIT_CODE_TO_NAME[lang_code]
-    nllb_tag = WIT_TO_NLLB[lang_code]
-    logger.info("Processing language: %s (%s)", lang_name, lang_code)
+    wanted = set(lang_codes) | {"en"}
+    ds = _load_wit_base(logger)
 
-    ds = _load_wit_subset(lang_code, logger)
+    collected: dict[str, list[dict]] = {code: [] for code in lang_codes}
+    overcollect = n_per_language * 3
+    done: set[str] = set()
 
-    pairs: list[dict] = []
-    seen_urls: set[str] = set()
     for row in ds:
-        url = row.get("image_url")
-        if not url or url not in english_index or url in seen_urls:
-            continue
-
-        caption_text = _build_caption_text(
-            row.get("caption_reference_description"),
-            row.get("caption_attribution_description"),
-        )
-        if not caption_text:
-            continue
-
-        seen_urls.add(url)
-        pairs.append({
-            "id": hashlib.sha1(f"{lang_code}_{url}".encode()).hexdigest(),
-            "image_url": url,
-            "caption_text": caption_text,
-            "target_caption": english_index[url],
-            "source_language": lang_name,
-            "language_code": lang_code,
-            "nllb_lang_tag": nllb_tag,
-        })
-
-        # Over-collect then sample to get a random subset, not just the first N.
-        if len(pairs) >= n_samples * 3:
+        if len(done) == len(lang_codes):
             break
+        url = row.get("image_url")
+        if not url:
+            continue
 
-    n = min(n_samples, len(pairs))
-    sampled = random.Random(seed).sample(pairs, n)
-    logger.info("  %s: %d pairs found → sampled %d", lang_name, len(pairs), n)
+        entries = _extract_lang_entries(row, wanted)
+        en_entry = entries.get("en")
+        if not en_entry:
+            continue
+        en_caption = (en_entry.get("caption_reference_description") or "").strip()
+        if not en_caption:
+            continue
+
+        for code in lang_codes:
+            if code in done:
+                continue
+            entry = entries.get(code)
+            if not entry:
+                continue
+            caption_text = _build_caption_text(entry.get("caption_reference_description"))
+            if not caption_text:
+                continue
+
+            collected[code].append({
+                "id": hashlib.sha1(f"{code}_{url}".encode()).hexdigest(),
+                "image_url": url,
+                "caption_text": caption_text,
+                "target_caption": en_caption,
+                "source_language": WIT_CODE_TO_NAME[code],
+                "language_code": code,
+                "nllb_lang_tag": WIT_TO_NLLB[code],
+            })
+            # Over-collect then sample to get a random subset, not just the first N.
+            if len(collected[code]) >= overcollect:
+                done.add(code)
+
+    sampled: dict[str, list[dict]] = {}
+    for code in lang_codes:
+        pairs = collected[code]
+        n = min(n_per_language, len(pairs))
+        sampled[code] = random.Random(seed).sample(pairs, n)
+        logger.info("  %s: %d pairs found → sampled %d", WIT_CODE_TO_NAME[code], len(pairs), n)
     return sampled
+
+
+def analyze_attribution_script(
+    lang_codes: list[str],
+    max_rows: int,
+    logger: logging.Logger,
+) -> None:
+    """Single pass over WIT: for each language, count how many images with a
+    caption in that language also have a non-empty attribution, and how many
+    of those attributions actually appear to be written in the target
+    script (vs. left in English/Latin, which :func:`_build_caption_text`
+    would then drop). Latin-script languages are reported as "n/a" since
+    script alone can't distinguish them from English attribution text.
+    """
+    wanted = set(lang_codes)
+    ds = _load_wit_base(logger)
+
+    with_attr = {code: 0 for code in lang_codes}
+    in_script = {code: 0 for code in lang_codes}
+
+    scanned = 0
+    for row in ds:
+        scanned += 1
+        if scanned > max_rows:
+            break
+        attr = (row.get("caption_attribution_description") or "").strip()
+        if not attr:
+            continue
+        entries = _extract_lang_entries(row, wanted)
+        for code in lang_codes:
+            entry = entries.get(code)
+            if not entry or not (entry.get("caption_reference_description") or "").strip():
+                continue
+            with_attr[code] += 1
+            script = _script_for_lang(code)
+            if script is not None and _is_in_script(attr, script):
+                in_script[code] += 1
+
+    W = [16, 6, 12, 12, 20]
+    header = (
+        f"{'Language':<{W[0]}} {'Code':<{W[1]}} {'With attr':<{W[2]}}"
+        f" {'In script':<{W[3]}} {'Notes':<{W[4]}}"
+    )
+    sep = "-" * (sum(W) + len(W) - 1)
+    print(f"\nRows scanned: {scanned:,}  (cap: {max_rows:,})\n")
+    print(header)
+    print(sep)
+    for code in lang_codes:
+        lang_name = WIT_CODE_TO_NAME.get(code, code)
+        script = _script_for_lang(code)
+        if script is None:
+            print(f"{lang_name:<{W[0]}} {code:<{W[1]}} {with_attr[code]:>{W[2]-1},}"
+                  f" {'n/a':<{W[3]}} {'Latin script, not checked':<{W[4]}}")
+        else:
+            pct = 100.0 * in_script[code] / with_attr[code] if with_attr[code] else 0.0
+            print(f"{lang_name:<{W[0]}} {code:<{W[1]}} {with_attr[code]:>{W[2]-1},}"
+                  f" {in_script[code]:>{W[3]-1},} {pct:>5.1f}%")
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -252,36 +338,55 @@ def load_language_pairs(
 
 def print_coverage_table(
     lang_codes: list[str],
-    english_index_size: int,
-    max_rows_per_lang: int,
+    max_rows: int,
     logger: logging.Logger,
 ) -> None:
-    """Stream WIT and print a per-language coverage table.
+    """Stream WIT once and print a per-language coverage table.
 
     For each language prints:
         - total unique images with a valid caption
-        - how many of those also have an English caption in the indexed subset
+        - how many of those also have an English caption (same row)
         - coverage percentage
 
     Args:
         lang_codes: ISO 639-1 codes to survey (must be keys of :data:`WIT_TO_NLLB`).
-        english_index_size: How many English WIT rows to index (caps memory use).
-            The true overlap may be higher than reported if the English subset is
-            larger than this value.
-        max_rows_per_lang: Stop streaming each language after this many rows.
-            Rows beyond the cap are not counted; a "+" marker flags capped languages.
+        max_rows: Stop streaming after this many rows total. Rows beyond the
+            cap are not counted; a "+" marker flags capped languages.
         logger: Logger instance.
     """
-    logger.info("Building English URL index (max %d)...", english_index_size)
-    ds_en = _load_wit_subset("en", logger)
-    en_urls: set[str] = set()
-    for row in ds_en:
-        url = row.get("image_url")
-        if url:
-            en_urls.add(url)
-        if len(en_urls) >= english_index_size:
+    wanted = set(lang_codes) | {"en"}
+    ds = _load_wit_base(logger)
+
+    total = {code: 0 for code in lang_codes}
+    paired = {code: 0 for code in lang_codes}
+    seen: dict[str, set[str]] = {code: set() for code in lang_codes}
+
+    scanned = 0
+    for row in ds:
+        scanned += 1
+        if scanned > max_rows:
             break
-    logger.info("English URL index: %d entries", len(en_urls))
+        url = row.get("image_url")
+        if not url:
+            continue
+
+        entries = _extract_lang_entries(row, wanted)
+        en_entry = entries.get("en")
+        has_en = bool(en_entry and (en_entry.get("caption_reference_description") or "").strip())
+
+        for code in lang_codes:
+            entry = entries.get(code)
+            if not entry or url in seen[code]:
+                continue
+            caption = _build_caption_text(entry.get("caption_reference_description"))
+            if not caption:
+                continue
+            seen[code].add(url)
+            total[code] += 1
+            if has_en:
+                paired[code] += 1
+
+    capped = scanned > max_rows
 
     W = [16, 6, 16, 22, 10]
     header = (
@@ -289,42 +394,17 @@ def print_coverage_table(
         f" {'With EN caption':<{W[3]}} {'Coverage':<{W[4]}}"
     )
     sep = "-" * (sum(W) + len(W) - 1)
-    print(f"\nEnglish URL index size: {len(en_urls):,}  "
-          f"(rows-per-lang cap: {max_rows_per_lang:,})\n")
+    print(f"\nRows scanned: {scanned:,}  (cap: {max_rows:,})\n")
     print(header)
     print(sep)
 
     for code in lang_codes:
         lang_name = WIT_CODE_TO_NAME.get(code, code)
-        ds = _load_wit_subset(code, logger)
-        total = 0
-        paired = 0
-        seen: set[str] = set()
-        scanned = 0
-        for row in ds:
-            scanned += 1
-            if scanned > max_rows_per_lang:
-                break
-            url = row.get("image_url")
-            if not url or url in seen:
-                continue
-            caption = _build_caption_text(
-                row.get("caption_reference_description"),
-                row.get("caption_attribution_description"),
-            )
-            if not caption:
-                continue
-            seen.add(url)
-            total += 1
-            if url in en_urls:
-                paired += 1
-
-        capped = scanned > max_rows_per_lang
-        pct = 100.0 * paired / total if total else 0.0
+        pct = 100.0 * paired[code] / total[code] if total[code] else 0.0
         flag = "+" if capped else " "
         print(
-            f"{lang_name:<{W[0]}} {code:<{W[1]}} {total:>{W[2]-1},}{flag}"
-            f" {paired:>{W[3]-1},}  {pct:>{W[4]-2}.1f}%"
+            f"{lang_name:<{W[0]}} {code:<{W[1]}} {total[code]:>{W[2]-1},}{flag}"
+            f" {paired[code]:>{W[3]-1},}  {pct:>{W[4]-2}.1f}%"
         )
 
     print(f"\n'+' = row cap hit; true image count and coverage may be higher.\n")
@@ -340,22 +420,26 @@ def main() -> None:
         "--n-per-language", type=int, default=50_000,
         help="Target number of image-caption pairs per language.",
     )
-    parser.add_argument(
-        "--english-index-size", type=int, default=500_000,
-        help="How many English WIT entries to index for join coverage.",
-    )
-    parser.add_argument("--output-dir", type=str, default="./data/wit")
+    parser.add_argument("--output-dir", type=str, default="./data")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--stats-only", action="store_true",
         help=(
             "Print a per-language coverage table and exit without writing any data. "
-            "Use --max-rows-per-lang to cap how far each language is streamed."
+            "Use --max-rows to cap how far the dataset is streamed."
         ),
     )
     parser.add_argument(
-        "--max-rows-per-lang", type=int, default=200_000,
-        help="Row cap per language when --stats-only is set (default 200 000).",
+        "--attribution-script-stats", action="store_true",
+        help=(
+            "Print, per language, how many images with a target-language caption "
+            "also have their attribution written in that language's script (vs. "
+            "left in English) and exit without writing any data."
+        ),
+    )
+    parser.add_argument(
+        "--max-rows", type=int, default=200_000,
+        help="Total row cap when --stats-only or --attribution-script-stats is set (default 200 000).",
     )
     args = parser.parse_args()
 
@@ -370,16 +454,16 @@ def main() -> None:
             )
 
     if args.stats_only:
-        print_coverage_table(lang_codes, args.english_index_size, args.max_rows_per_lang, logger)
+        print_coverage_table(lang_codes, args.max_rows, logger)
         return
 
-    english_index = build_english_index(args.english_index_size, logger)
+    if args.attribution_script_stats:
+        analyze_attribution_script(lang_codes, args.max_rows, logger)
+        return
 
-    all_rows: list[dict] = []
-    for code in lang_codes:
-        rows = load_language_pairs(code, english_index, args.n_per_language, args.seed, logger)
-        all_rows.extend(rows)
+    pairs_by_lang = build_language_pairs(lang_codes, args.n_per_language, args.seed, logger)
 
+    all_rows: list[dict] = [row for rows in pairs_by_lang.values() for row in rows]
     random.Random(args.seed).shuffle(all_rows)
     out_path = os.path.join(args.output_dir, "wit_pairs.jsonl")
     _write_jsonl(out_path, all_rows, logger)

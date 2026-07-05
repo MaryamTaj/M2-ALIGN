@@ -10,12 +10,12 @@ Input JSONL fields (from load_wit_data.py):
 Usage
 -----
     python train_wit.py \\
-        --data-path ./data/wit/wit_pairs.jsonl \\
+        --data-path ./data/wit_pairs.jsonl \\
         --output-dir ./outputs/wit \\
         --stage1-mapping-ckpt ../Stage1/outputs/.../pytorch_model.bin \\
         --mt-path facebook/nllb-200-distilled-600M \\
         --llm-path Qwen/Qwen3-VL-8B-Instruct \\
-        --image-cache-dir ./data/wit/image_cache
+        --image-cache-dir ./data/image_cache
 """
 from __future__ import annotations
 
@@ -500,7 +500,7 @@ if __name__ == "__main__":
                         help="Stage 1 mapping checkpoint to warm-start from.")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-distilled-600M")
     parser.add_argument("--llm-path", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--image-cache-dir", type=str, default="./data/wit/image_cache")
+    parser.add_argument("--image-cache-dir", type=str, default="./data/image_cache")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--epochs", type=int, default=3)

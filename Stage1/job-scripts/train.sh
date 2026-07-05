@@ -85,7 +85,7 @@ deepspeed --master_port 50002 train.py --deepspeed \
   --stage_name mapping \
   --task nllb_corpus \
   --augmentation False \
-  --nllb_data_dir ./data/stage1 \
+  --nllb_data_dir ./data \
   --nllb_languages Bengali \
   --train_num 100000 \
   --val_size 3000 \

@@ -86,7 +86,7 @@ def download_language(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download NLLB sentence pairs.")
-    parser.add_argument("--output_dir", type=str, default="./data/stage1",
+    parser.add_argument("--output_dir", type=str, default="./data",
                         help="Directory to write the output JSONL files.")
     parser.add_argument("--n_samples", type=int, default=100_000,
                         help="Number of sentence pairs to download per language (default: 100000).")
