@@ -86,7 +86,7 @@ deepspeed --master_port 50002 train.py --deepspeed \
   --task nllb_corpus \
   --augmentation False \
   --nllb_data_dir ./data/stage1 \
-  --nllb_languages Swahili \
+  --nllb_languages Bengali \
   --train_num 100000 \
   --val_size 3000 \
   --train_batch_size 24 \
@@ -98,4 +98,4 @@ deepspeed --master_port 50002 train.py --deepspeed \
   --use_wandb True \
   --wandb_mode offline \
   --wandb_project m2-align \
-  --wandb_run_name stage1-nllb-swahili
+  --wandb_run_name stage1-nllb-bengali
