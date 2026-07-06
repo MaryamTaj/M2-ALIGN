@@ -1,15 +1,15 @@
 """Stage 2 WIT training: image + multilingual caption → English caption.
 
 Trains the Mapping layer of :class:`VisualMindMerger` on WIT image-text pairs
-produced by :mod:`load_wit_data`.  NLLB encoder and Qwen3-VL (including the
+produced by :mod:`load_image`.  NLLB encoder and Qwen3-VL (including the
 vision tower) are frozen; only the Mapping MLP is updated.
 
-Input JSONL fields (from load_wit_data.py):
+Input JSONL fields (from load_image.py):
     image_url, caption_text, target_caption, source_language, nllb_lang_tag
 
 Usage
 -----
-    python train_wit.py \\
+    python train.py \\
         --data-path ./data/wit_pairs.jsonl \\
         --output-dir ./outputs/wit \\
         --stage1-mapping-ckpt ../Stage1/outputs/.../pytorch_model.bin \\

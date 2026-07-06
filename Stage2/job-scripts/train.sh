@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage3a_train_text
+#SBATCH --job-name=stage2_train_wit
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,30 +9,26 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3a_train_text_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_train_wit_%j.log
 
-# Usage: TASK=mgsm sbatch train_text.sh
-#   Supported tasks: mgsm, msvamp (xnli/xcsqa dropped for now — see
-#   Stage3/load_text.py)
-#   Reads data from Stage3/data/stage3a/<task>/<task>.jsonl
-#   Warm-starts from Stage 2's vision-mapping checkpoint (chained lineage:
-#   Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
-#   Saves checkpoint to Stage3/outputs/stage3a/<task>/mapping/pytorch_model.bin
+# Usage: sbatch train.sh
+#   Reads data from Stage2/data/wit_pairs.jsonl (see Stage2/load_image.py)
+#   Warm-starts the Mapping layer from Stage 1's checkpoint (chained
+#   lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
+#   Saves checkpoint to Stage2/outputs/wit/mapping/pytorch_model.bin
 
 set -euo pipefail
 
-TASK="${TASK:-mgsm}"
-
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
+STAGE1="$PROJECT_ROOT/Stage1"
 STAGE2="$PROJECT_ROOT/Stage2"
-STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
+STAGE1_MAPPING_CKPT="$STAGE1/outputs/M2-ALIGN/nllb_corpus/mapping/pytorch_model.bin"
 
-DATA_DIR="$STAGE3/data/stage3a/$TASK"
-OUTPUT_DIR="$STAGE3/outputs/stage3a/$TASK"
+DATA_PATH="$STAGE2/data/wit_pairs.jsonl"
+OUTPUT_DIR="$STAGE2/outputs/wit"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -47,7 +43,6 @@ echo "=== Job info ==="
 date
 hostname
 echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}"
-echo "TASK=$TASK"
 nvidia-smi || true
 echo
 
@@ -95,41 +90,40 @@ if [ ! -d "$MT_PATH" ]; then
   echo "ERROR: MT snapshot path not found: $MT_PATH"
   exit 1
 fi
-if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
-  echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
-  echo "       Run Stage2/job-scripts/train.sh first."
+if [ ! -f "$STAGE1_MAPPING_CKPT" ]; then
+  echo "ERROR: Stage 1 mapping checkpoint not found: $STAGE1_MAPPING_CKPT"
+  echo "       Run Stage1/job-scripts/train.sh first."
   exit 1
 fi
-if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
-  echo "ERROR: No .jsonl files found in DATA_DIR: $DATA_DIR"
-  echo "       Run: TASK=$TASK sbatch Stage3/job-scripts/load_text.sh"
+if [ ! -f "$DATA_PATH" ]; then
+  echo "ERROR: Data file not found: $DATA_PATH"
+  echo "       Run: python Stage2/load_image.py --languages bn --n-per-language 100000 --output-dir Stage2/data"
   exit 1
 fi
 
-echo "=== Start Stage 3a training: $TASK ==="
-echo "DATA_DIR=$DATA_DIR"
+echo "=== Start Stage 2 training ==="
+echo "DATA_PATH=$DATA_PATH"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
-echo "STAGE2_MAPPING_CKPT=$STAGE2_MAPPING_CKPT"
+echo "STAGE1_MAPPING_CKPT=$STAGE1_MAPPING_CKPT"
 echo
 cd "$PROJECT_ROOT"
-python -u Stage3/train_text.py \
-  --task       "$TASK" \
-  --init-mapping-ckpt "$STAGE2_MAPPING_CKPT" \
-  --data-dir   "$DATA_DIR" \
+python -u Stage2/train.py \
+  --data-path  "$DATA_PATH" \
   --output-dir "$OUTPUT_DIR" \
+  --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --mt-path    "$MT_PATH" \
   --llm-path   "$LLM_PATH" \
   --epochs     3 \
   --lr         2e-5 \
-  --train-batch-size 2 \
-  --eval-batch-size  2 \
+  --train-batch-size 4 \
+  --eval-batch-size  4 \
   --grad-accum 8 \
-  --max-seq-len 512 \
+  --max-mt-seq-len 512 \
   --max-gen-len 512 \
   --use-wandb \
   --wandb-mode    offline \
   --wandb-project m2-align \
-  --wandb-run-name "stage3a-$TASK" \
+  --wandb-run-name "stage2-wit" \
   --local-files-only
 
 echo "=== Done ==="
