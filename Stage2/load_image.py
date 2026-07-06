@@ -574,7 +574,10 @@ def main() -> None:
             "and an English caption, with no cap and no down-sampling."
         ),
     )
-    parser.add_argument("--output-dir", type=str, default="./data")
+    parser.add_argument(
+        "--output-dir", type=str,
+        default=os.path.join(os.path.dirname(__file__), "data"),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--stats-only", action="store_true",
