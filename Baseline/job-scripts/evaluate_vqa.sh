@@ -29,7 +29,7 @@ MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-GQA_IMAGES_DIR="$SCRATCH/data/gqa/images"
+GQA_IMAGES_DIR="$PROJECT_ROOT/Stage3/data/gqa/images"
 EVAL_DATA="$PROJECT_ROOT/Stage3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
 
 echo "=== Job info ==="

@@ -39,14 +39,13 @@ CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
 
 Usage
 -----
-    python load_vqa_eval_data.py --benchmark xgqa --languages bn \\
-        --output_dir ./data/stage3b_eval
+    # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
+    # resolved relative to this script's own location, not the cwd:
+    python Stage3/load_vqa_eval_data.py --benchmark xgqa --languages bn
 
     # Deferred (Indonesian/Javanese) -- kept working for later, not run today:
-    python load_vqa_eval_data.py --benchmark worldcuisines --languages id,jv \\
-        --output_dir ./data/stage3b_eval
-    python load_vqa_eval_data.py --benchmark cvqa --languages id,jv \\
-        --output_dir ./data/stage3b_eval
+    python Stage3/load_vqa_eval_data.py --benchmark worldcuisines --languages id,jv
+    python Stage3/load_vqa_eval_data.py --benchmark cvqa --languages id,jv
 """
 from __future__ import annotations
 
@@ -284,13 +283,21 @@ def main() -> None:
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--languages", type=str, required=True,
                         help="Comma-separated ISO codes, e.g. 'bn,id' for xgqa or 'id,jv' for worldcuisines/cvqa.")
-    parser.add_argument("--output_dir", type=str, default="./data/stage3b_eval")
+    parser.add_argument(
+        "--output_dir", type=str, default=None,
+        help="Defaults to Stage3/data/stage3b_eval (resolved relative to this "
+             "script's location, not the current working directory).",
+    )
     parser.add_argument("--worldcuisines-split", type=str, default="test_small",
                         choices=["test_small", "test_large"])
     parser.add_argument("--worldcuisines-task", type=str, default="task1", choices=["task1", "task2"])
     args = parser.parse_args()
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if args.output_dir is None:
+        args.output_dir = os.path.join(script_dir, "data", "stage3b_eval")
+
+    logger = setup_logging(os.path.join(script_dir, "logs"))
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
 
     for lang in langs:
