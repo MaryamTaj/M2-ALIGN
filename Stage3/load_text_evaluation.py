@@ -29,11 +29,6 @@ DATASETS: list[tuple[str, str | None, str]] = [
     ("Mathoctopus/MSVAMP",   "en",        "test"),
     ("Mathoctopus/MSVAMP",   "sw",        "test"),
     ("Mathoctopus/MSVAMP",   "bn",        "test"),
-    # AfriMGSM — Swahili, Wolof, Yoruba
-    # masakhane/afrimgsm uses full FLORES config codes: swa, wol, yor
-    ("masakhane/afrimgsm",   "swa",       "test"),
-    ("masakhane/afrimgsm",   "wol",       "test"),
-    ("masakhane/afrimgsm",   "yor",       "test"),
 ]
 
 OK, FAILED = [], []

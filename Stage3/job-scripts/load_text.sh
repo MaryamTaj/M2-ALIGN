@@ -11,11 +11,11 @@
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3a_load_text_%j.log
 
-# Build Stage 3a training data (math only — mgsm/msvamp) for BOTH Swahili
-# and Bengali on a compute node. Writes one file per (task, language) —
-# e.g. Stage3/data/stage3a/mgsm/mgsm_swahili.jsonl and .../mgsm_bengali.jsonl
-# — so Stage3/train_text.py (which globs every *.jsonl in --data-dir)
-# trains jointly on both languages, not Swahili alone.
+# Build Stage 3a training data (math only — mgsm/msvamp) for Bengali on a
+# compute node. Writes Stage3/data/stage3a/mgsm/mgsm_bengali.jsonl (and the
+# msvamp symlink below). Bengali is the only Stage 3 language: it's the one
+# language with native coverage in both WIT (Stage 2) and our evaluation
+# benchmarks (MGSM/MSVAMP/xGQA); Swahili isn't part of Stage 3.
 #
 # xnli/xcsqa are not built here: standard XNLI's language list is
 # ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg" is Bulgarian, not
@@ -39,7 +39,7 @@ set -euo pipefail
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 NLLB_MODEL="$HOME/.cache/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/1a07f7d195896b2114afcb79b7b57ab512e7b43e"
 DATA_DIR="$PROJECT_ROOT/Stage3/data/stage3a"
-LANGUAGES=(Swahili Bengali)
+LANGUAGES=(Bengali)
 
 echo "=== Job info ==="
 date

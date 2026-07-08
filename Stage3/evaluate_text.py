@@ -1,14 +1,17 @@
-"""Stage 3a evaluation on text-only multilingual benchmarks.
+"""Stage 3 evaluation on text-only multilingual benchmarks (MGSM/MSVAMP).
 
-Loads the trained AugmentedMindMerger (NLLB encoder → mapping → frozen
-Qwen3-VL + LLM-side query prefix) and evaluates on the same text benchmarks
-as Baseline/evaluate_text.py.  Both the source-language text (via NLLB) and
-the chat-formatted task prompt (via the LLM tokenizer) are fed as the
-generation prefix, matching the Stage 3a training setup.
+Loads a trained AugmentedMindMerger checkpoint (NLLB encoder → mapping →
+frozen Qwen3-VL + LLM-side query prefix) and evaluates on the same text
+benchmarks as Baseline/evaluate_text.py. Both the source-language text (via
+NLLB) and the chat-formatted task prompt (via the LLM tokenizer) are fed as
+the generation prefix.
 
-Run once right after Stage 3a training (reference point for the secondary
-hypothesis) and again after Stage 3b (VQA augmentation) to check for
-regression — see the Stage 3 plan for the before/after comparison.
+By default this runs against the Stage 3b checkpoint (VQA-trained, warm-
+started directly from Stage 2) to check what VQA training did to text
+reasoning ability. It can also point at a standalone Stage 3a checkpoint
+(--mapping-ckpt pointed at outputs/stage3a/<task>/...) if one was trained
+separately via train_text.py -- that code path still exists but is no
+longer part of the main pipeline.
 
 Supported tasks
 ---------------
@@ -84,8 +87,8 @@ _MATH_SYSTEM = "You are a helpful assistant that solves math problems step by st
 def setup_logging(log_dir: str, task: str) -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"stage3a_eval_{task}_{timestamp}.log")
-    logger = logging.getLogger(f"stage3a_eval_{task}")
+    log_path = os.path.join(log_dir, f"stage3_text_eval_{task}_{timestamp}.log")
+    logger = logging.getLogger(f"stage3_text_eval_{task}")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     logger.addHandler(logging.FileHandler(log_path, encoding="utf-8"))
@@ -298,7 +301,7 @@ def _log_summary(
         return
     macro = sum(results.values()) / len(results)
     micro = total_correct / total_examples * 100 if total_examples else 0.0
-    logger.info("=== %s Stage3a Summary ===", task.upper())
+    logger.info("=== %s Stage 3 Text-Eval Summary ===", task.upper())
     for lang, acc in results.items():
         logger.info("  %-8s %.2f%%", lang, acc)
     logger.info("  Macro-avg (%d langs): %.2f%%", len(results), macro)
@@ -370,7 +373,7 @@ def evaluate_math(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Stage 3a AugmentedMindMerger evaluation on multilingual text benchmarks."
+        description="Stage 3 AugmentedMindMerger evaluation on multilingual text benchmarks."
     )
     parser.add_argument(
         "--task", required=True, choices=["mgsm", "msvamp"],

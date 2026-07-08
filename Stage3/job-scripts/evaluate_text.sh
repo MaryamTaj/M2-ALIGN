@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage3a_evaluate_text
+#SBATCH --job-name=stage3_evaluate_text
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,12 +9,12 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3a_evaluate_text_%x_%j.log
+#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3_evaluate_text_%x_%j.log
 
-# Usage — run this TWICE per the Stage 3 plan: once right after Stage 3a
-# training (establishes the reference point) and again after Stage 3b (VQA
-# augmentation) to check for regression. Point CHECKPOINT_STAGE at whichever
-# checkpoint you're evaluating.
+# Usage — evaluate the Stage 3 VQA checkpoint (stage3b, warm-started
+# directly from Stage 2) on the multilingual text benchmarks MGSM/MSVAMP,
+# alongside xGQA (see evaluate_vqa.sh), to get the full picture of what
+# VQA training did to the model:
 #   TASK=mgsm   sbatch evaluate_text.sh
 #   TASK=msvamp sbatch evaluate_text.sh
 # (xnli/xcsqa dropped for now — see Stage3/load_text.py)
@@ -22,14 +22,17 @@
 # Optional overrides:
 #   TASK=mgsm LANGS="sw bn en zh" sbatch evaluate_text.sh
 #   TASK=mgsm MAX_EXAMPLES=50     sbatch evaluate_text.sh
-#   CHECKPOINT_STAGE=stage3b TASK=mgsm sbatch evaluate_text.sh   # post-VQA regression check
+#   CHECKPOINT_STAGE=stage3a TASK=mgsm sbatch evaluate_text.sh   # legacy: a standalone
+#                                                                 # Stage 3a checkpoint,
+#                                                                 # if trained separately
+#                                                                 # via train_text.sh
 
 set -euo pipefail
 
 TASK="${TASK:-mgsm}"
 LANGS="${LANGS:-sw}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
-CHECKPOINT_STAGE="${CHECKPOINT_STAGE:-stage3a}"   # stage3a (reference) or stage3b (post-VQA)
+CHECKPOINT_STAGE="${CHECKPOINT_STAGE:-stage3b}"   # stage3b (default, VQA-trained) or stage3a (legacy, text-only)
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 STAGE3="$PROJECT_ROOT/Stage3"
@@ -37,8 +40,9 @@ STAGE3="$PROJECT_ROOT/Stage3"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 
-# Stage3a checkpoints are saved by Stage3/job-scripts/train_text.sh; Stage3b
-# checkpoints (post-VQA) are saved by Stage3/job-scripts/train_vqa.sh.
+# Stage3b checkpoints (the default -- VQA-trained, warm-started directly
+# from Stage 2) are saved by Stage3/job-scripts/train_vqa.sh. Stage3a
+# checkpoints (legacy, text-only) are saved by Stage3/job-scripts/train_text.sh.
 if [ "$CHECKPOINT_STAGE" = "stage3b" ]; then
   MAPPING_CKPT="$STAGE3/outputs/stage3b/mapping/pytorch_model.bin"
 else

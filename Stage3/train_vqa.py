@@ -3,11 +3,13 @@
 Trains the Mapping layer of :class:`AugmentedVisualMindMerger` on GQA-derived
 VQA data (see :mod:`load_vqa_data`) translated into Bengali (currently the
 sole active Stage 3 VQA language -- Indonesian/Javanese are deferred).
-Initialises from Stage 3a's text-augmentation checkpoint (chained
-lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b) so the final checkpoint
-has been trained on translation, vision-grounding, text reasoning, and VQA
-in that order. NLLB encoder, vision tower, and LLM all stay frozen; only
-the Mapping is updated.
+Initialises directly from Stage 2's vision-mapping checkpoint (chained
+lineage: Stage 1 -> Stage 2 -> Stage 3 (VQA)) so the final checkpoint has
+been trained on translation, vision-grounding, and VQA in that order.
+Stage 3a (text-only augmentation training) is no longer part of the
+pipeline -- the code still exists in train_text.py if you want to run it
+separately, but this script no longer chains from it. NLLB encoder, vision
+tower, and LLM all stay frozen; only the Mapping is updated.
 
 Input JSONL fields (from load_vqa_data.py):
     vg_image_id, query, answer, source_language, nllb_lang_tag
@@ -23,7 +25,7 @@ Usage
         --data-dir ./data/stage3b \\
         --images-dir /path/to/gqa/images \\
         --output-dir ./outputs/stage3b \\
-        --init-mapping-ckpt ../Stage3/outputs/stage3a/mgsm/mapping/pytorch_model.bin \\
+        --init-mapping-ckpt ../Stage2/outputs/wit/mapping/pytorch_model.bin \\
         --mt-path facebook/nllb-200-3.3B \\
         --llm-path Qwen/Qwen3-VL-8B-Instruct
 """
@@ -304,7 +306,7 @@ def main(args, logger: logging.Logger) -> None:
 
     Loads GQA-translated multilingual VQA data, builds an
     :class:`AugmentedVisualMindMerger`, initialises its mapping from
-    Stage 3a's text-augmentation checkpoint, and trains with
+    Stage 2's vision-mapping checkpoint, and trains with
     validation-based checkpointing.
     """
     set_seed(args.seed)
@@ -478,8 +480,8 @@ if __name__ == "__main__":
                         help="Local GQA images directory (extract https://nlp.stanford.edu/data/gqa/images.zip).")
     parser.add_argument("--output-dir", type=str, required=True)
     parser.add_argument("--init-mapping-ckpt", type=str, required=True,
-                        help="Path to Stage 3a's text-augmentation pytorch_model.bin "
-                             "(chained lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b).")
+                        help="Path to Stage 2's vision-mapping pytorch_model.bin "
+                             "(chained lineage: Stage 1 -> Stage 2 -> Stage 3 (VQA)).")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-3.3B")
     parser.add_argument("--llm-path", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--local-files-only", action="store_true")

@@ -153,7 +153,9 @@ class AugmentedMindMerger(nn.Module):
 
     Only the :class:`Mapping` parameters are trainable; both the MT encoder
     and the LLM are frozen. Initialised from Stage 2's vision-mapping
-    checkpoint (chained lineage: Stage 1 → Stage 2 → Stage 3a → Stage 3b).
+    checkpoint (Stage 1 → Stage 2 → Stage 3a). Stage 3a is optional/standalone
+    now -- it is no longer chained into Stage 3b, which instead initialises
+    directly from Stage 2 (see :class:`AugmentedVisualMindMerger`).
 
     Args:
         mt_path: HF model ID or local path for the NLLB/M2M MT model.
@@ -407,8 +409,8 @@ class AugmentedVisualMindMerger(nn.Module):
     `T` term is built from the untranslated source query rather than an
     English translation. Only the :class:`Mapping` parameters are
     trainable; the MT encoder, the vision tower, and the LLM are all
-    frozen. Initialised from Stage 3a's checkpoint (chained lineage:
-    Stage 1 → Stage 2 → Stage 3a → Stage 3b).
+    frozen. Initialised directly from Stage 2's checkpoint (chained lineage:
+    Stage 1 → Stage 2 → Stage 3 (VQA)); Stage 3a is no longer chained in.
 
     Args:
         mt_path: HF model ID or local path for the NLLB model.

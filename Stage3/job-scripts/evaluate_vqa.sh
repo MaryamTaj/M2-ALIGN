@@ -36,7 +36,7 @@ STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-GQA_IMAGES_DIR="$SCRATCH/data/gqa/images"
+GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 EVAL_DATA="$STAGE3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
 
 if [ "$CHECKPOINT_STAGE" = "stage2" ]; then

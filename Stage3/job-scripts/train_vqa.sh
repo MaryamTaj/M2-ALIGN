@@ -13,8 +13,10 @@
 
 # Stage 3b: VQA augmentation training (AugmentedVisualMindMerger).
 #   Reads GQA-translated data from Stage3/data/stage3b/*.jsonl
-#   Warm-starts from Stage 3a's text-augmentation checkpoint (chained
-#   lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
+#   Warm-starts directly from Stage 2's vision-mapping checkpoint (chained
+#   lineage: Stage 1 -> Stage 2 -> Stage 3 (VQA)). Stage 3a (text-only
+#   augmentation) is no longer part of the pipeline -- see train_text.py /
+#   train_text.sh if you want to run it separately.
 #   Saves checkpoint to Stage3/outputs/stage3b/mapping/pytorch_model.bin
 #
 # BEFORE SUBMITTING: download and extract GQA's official image archive
@@ -25,16 +27,13 @@
 set -euo pipefail
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
+STAGE2="$PROJECT_ROOT/Stage2"
 STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-GQA_IMAGES_DIR="$SCRATCH/data/gqa/images"
-# train_text.py trains one checkpoint PER TASK (mgsm/msvamp are separate
-# runs) -- there is no single "Stage 3a" checkpoint. mgsm is picked here
-# as the representative text-reasoning checkpoint to chain
-# into Stage 3b; change this if you'd rather chain from a different task.
-STAGE3A_MAPPING_CKPT="$STAGE3/outputs/stage3a/mgsm/mapping/pytorch_model.bin"
+GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
 
 DATA_DIR="$STAGE3/data/stage3b"
 OUTPUT_DIR="$STAGE3/outputs/stage3b"
@@ -103,9 +102,9 @@ if [ ! -d "$GQA_IMAGES_DIR" ]; then
   echo "       Download+extract https://nlp.stanford.edu/data/gqa/images.zip there."
   exit 1
 fi
-if [ ! -f "$STAGE3A_MAPPING_CKPT" ]; then
-  echo "ERROR: Stage 3a mapping checkpoint not found: $STAGE3A_MAPPING_CKPT"
-  echo "       Run: TASK=mgsm sbatch Stage3/job-scripts/train_text.sh"
+if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
+  echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
+  echo "       Run Stage2/job-scripts/train.sh first."
   exit 1
 fi
 if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
@@ -117,14 +116,14 @@ fi
 echo "=== Start Stage 3b VQA training ==="
 echo "DATA_DIR=$DATA_DIR"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
-echo "STAGE3A_MAPPING_CKPT=$STAGE3A_MAPPING_CKPT"
+echo "STAGE2_MAPPING_CKPT=$STAGE2_MAPPING_CKPT"
 echo
 cd "$PROJECT_ROOT"
 python -u Stage3/train_vqa.py \
   --data-dir    "$DATA_DIR" \
   --images-dir  "$GQA_IMAGES_DIR" \
   --output-dir  "$OUTPUT_DIR" \
-  --init-mapping-ckpt "$STAGE3A_MAPPING_CKPT" \
+  --init-mapping-ckpt "$STAGE2_MAPPING_CKPT" \
   --mt-path     "$MT_PATH" \
   --llm-path    "$LLM_PATH" \
   --epochs      3 \
