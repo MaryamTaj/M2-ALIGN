@@ -134,7 +134,7 @@ def generate_answer(
     max_new_tokens: int,
 ) -> str:
     messages = [
-        {"role": "system", "content": system_message},
+        {"role": "system", "content": [{"type": "text", "text": system_message}]},
         {"role": "user", "content": [
             {"type": "image", "image": image},
             {"type": "text", "text": prompt},
