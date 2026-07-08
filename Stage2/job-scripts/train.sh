@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=30:00:00
+#SBATCH --time=36:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -106,6 +106,15 @@ echo "DATA_PATH=$DATA_PATH"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
 echo "STAGE1_MAPPING_CKPT=$STAGE1_MAPPING_CKPT"
 echo
+
+RESUME_ARGS=()
+TRAINING_STATE="$OUTPUT_DIR/training_state.pt"
+if [ -f "$TRAINING_STATE" ]; then
+  echo "Found existing training_state.pt — resuming: $TRAINING_STATE"
+  RESUME_ARGS=(--resume-from-checkpoint "$TRAINING_STATE")
+fi
+echo
+
 cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
   --data-path  "$DATA_PATH" \
@@ -120,11 +129,13 @@ python -u Stage2/train.py \
   --grad-accum 8 \
   --max-mt-seq-len 512 \
   --max-gen-len 512 \
+  --save-steps 200 \
   --use-wandb \
   --wandb-mode    offline \
   --wandb-project m2-align \
   --wandb-run-name "stage2-wit" \
-  --local-files-only
+  --local-files-only \
+  "${RESUME_ARGS[@]}"
 
 echo "=== Done ==="
 date

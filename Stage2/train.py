@@ -256,6 +256,54 @@ def save_checkpoint(path: str, model: VisualMindMerger, step: int, loss: float) 
     )
 
 
+def save_training_state(
+    path: str,
+    model: VisualMindMerger,
+    optimizer: torch.optim.Optimizer,
+    epoch: int,
+    step_in_epoch: int,
+    global_step: int,
+    best_val: float,
+) -> None:
+    """Save a resumable snapshot (weights + optimizer + RNG + progress).
+
+    Written atomically (tmp file + rename) so a mid-write SLURM kill can't
+    leave a corrupt checkpoint behind.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = path + ".tmp"
+    torch.save(
+        {
+            "epoch": epoch,
+            "step_in_epoch": step_in_epoch,
+            "global_step": global_step,
+            "best_val": best_val,
+            "model_state_dict": model.mapping.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state": torch.cuda.get_rng_state_all(),
+            "python_rng_state": random.getstate(),
+        },
+        tmp_path,
+    )
+    os.replace(tmp_path, path)
+
+
+def load_training_state(
+    path: str,
+    model: VisualMindMerger,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> tuple[int, int, int, float]:
+    ckpt = torch.load(path, map_location=device)
+    model.mapping.load_state_dict(ckpt["model_state_dict"])
+    optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+    torch.set_rng_state(ckpt["torch_rng_state"].cpu())
+    torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
+    random.setstate(ckpt["python_rng_state"])
+    return ckpt["epoch"], ckpt["step_in_epoch"], ckpt["global_step"], ckpt["best_val"]
+
+
 # ---------------------------------------------------------------------------
 # W&B helpers (identical pattern to existing Stage 2 train.py)
 # ---------------------------------------------------------------------------
@@ -394,14 +442,28 @@ def main(args, logger: logging.Logger) -> None:
 
     best_val = float("inf")
     global_step = 0
+    start_epoch = 0
+    resume_skip_batches = 0
 
-    for epoch in range(args.epochs):
+    if args.resume_from_checkpoint:
+        start_epoch, resume_skip_batches, global_step, best_val = load_training_state(
+            args.resume_from_checkpoint, model, optimizer, device
+        )
+        logger.info(
+            "Resumed from %s: epoch=%d step_in_epoch=%d global_step=%d best_val=%.4f",
+            args.resume_from_checkpoint, start_epoch, resume_skip_batches, global_step, best_val,
+        )
+
+    for epoch in range(start_epoch, args.epochs):
         model.train()
         running, steps = 0.0, 0
         pbar = tqdm(train_loader, desc=f"epoch={epoch}")
         optimizer.zero_grad(set_to_none=True)
+        skip_batches = resume_skip_batches if epoch == start_epoch else 0
 
-        for batch in pbar:
+        for batch_idx, batch in enumerate(pbar):
+            if batch_idx < skip_batches:
+                continue
             if batch is None:
                 continue
 
@@ -441,6 +503,13 @@ def main(args, logger: logging.Logger) -> None:
             pbar.set_postfix(loss=f"{running / steps:.4f}")
             if use_wandb:
                 wandb.log({"train/loss": running / steps, "train/global_step": global_step})
+
+            if args.save_steps > 0 and global_step % args.save_steps == 0:
+                state_path = os.path.join(args.output_dir, "training_state.pt")
+                save_training_state(
+                    state_path, model, optimizer, epoch, batch_idx + 1, global_step, best_val
+                )
+                logger.info("Saved periodic training state (global_step=%d) → %s", global_step, state_path)
 
         # Validation
         model.eval()
@@ -518,6 +587,15 @@ if __name__ == "__main__":
             "Setting min=max forces a fixed visual token count across the batch, "
             "avoiding padding in the visual dimension."
         ),
+    )
+    parser.add_argument(
+        "--save-steps", type=int, default=200,
+        help="Save a resumable training-state snapshot every N optimizer steps "
+             "(to <output-dir>/training_state.pt). 0 disables periodic checkpointing.",
+    )
+    parser.add_argument(
+        "--resume-from-checkpoint", type=str, default=None,
+        help="Path to a training_state.pt (as written by --save-steps) to resume from.",
     )
     parser.add_argument("--val-ratio", type=float, default=0.05)
     parser.add_argument("--num-workers", type=int, default=4)
