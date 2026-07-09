@@ -119,6 +119,7 @@ cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
   --data-path  "$DATA_PATH" \
   --output-dir "$OUTPUT_DIR" \
+  --image-cache-dir "$STAGE2/data/image_cache" \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --mt-path    "$MT_PATH" \
   --llm-path   "$LLM_PATH" \

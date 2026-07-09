@@ -7,6 +7,10 @@ vision tower) are frozen; only the Mapping MLP is updated.
 Input JSONL fields (from load_image.py):
     image_url, caption_text, target_caption, source_language, nllb_lang_tag
 
+Images are expected to already be downloaded into ``--image-cache-dir`` by
+:mod:`load_image` — this script never touches the network, since compute
+nodes on some clusters (e.g. Narval) have no internet access.
+
 Usage
 -----
     python train.py \\
@@ -21,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import logging
 import math
@@ -30,7 +33,6 @@ import random
 from datetime import datetime
 from functools import partial
 
-import requests
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
@@ -75,17 +77,20 @@ def set_seed(seed: int) -> None:
 # ---------------------------------------------------------------------------
 
 class WITDataset(Dataset):
-    """Loads WIT JSONL pairs and fetches images from URLs with local caching.
+    """Loads WIT JSONL pairs and reads their pre-downloaded, cached images.
+
+    Images must already be present in *cache_dir*, keyed by
+    ``sha1(image_url).jpg`` — see :func:`load_image.download_images`, which
+    populates this cache ahead of training.
 
     Args:
         rows: List of dicts from the WIT JSONL file.
-        cache_dir: Directory for caching downloaded images as JPEG files.
+        cache_dir: Directory containing cached images as JPEG files.
     """
 
     def __init__(self, rows: list[dict], cache_dir: str) -> None:
         self.rows = rows
         self.cache_dir = cache_dir
-        os.makedirs(cache_dir, exist_ok=True)
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -105,17 +110,10 @@ class WITDataset(Dataset):
     def _load_image(self, url: str) -> Image.Image | None:
         cache_key = hashlib.sha1(url.encode()).hexdigest()
         cache_path = os.path.join(self.cache_dir, cache_key + ".jpg")
-        if os.path.exists(cache_path):
-            try:
-                return Image.open(cache_path).convert("RGB")
-            except Exception:
-                pass
+        if not os.path.exists(cache_path):
+            return None
         try:
-            resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
-            resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-            img.save(cache_path, format="JPEG", quality=85)
-            return img
+            return Image.open(cache_path).convert("RGB")
         except Exception:
             return None
 

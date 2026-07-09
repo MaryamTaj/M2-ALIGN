@@ -19,6 +19,12 @@ Output JSONL fields per row:
     id, image_url, caption_text, target_caption,
     source_language, language_code, nllb_lang_tag
 
+Images themselves are downloaded here too (into ``<output-dir>/image_cache``
+by default), not by the training script — this keeps train.py free of any
+network dependency, which matters on clusters (e.g. Narval) whose compute
+nodes have no internet access. Pairs whose image fails to download are
+dropped from the JSONL. Pass ``--skip-download`` to only write the JSONL.
+
 Usage
 -----
     python load_image.py \\
@@ -29,7 +35,9 @@ Usage
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
+import io
 import json
 import logging
 import os
@@ -37,7 +45,9 @@ import random
 import time
 from datetime import datetime
 
+import requests
 from datasets import load_dataset
+from PIL import Image
 
 # How often (in rows scanned) to log progress / persist a checkpoint.
 PROGRESS_EVERY = 20_000
@@ -213,6 +223,81 @@ def _write_jsonl(path: str, rows: list[dict], logger: logging.Logger) -> None:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     logger.info("Wrote %d rows → %s", len(rows), path)
+
+
+def _image_cache_path(cache_dir: str, url: str) -> str:
+    cache_key = hashlib.sha1(url.encode()).hexdigest()
+    return os.path.join(cache_dir, cache_key + ".jpg")
+
+
+def _download_one_image(url: str, cache_dir: str) -> bool:
+    """Fetch *url* into the on-disk image cache if not already there.
+
+    Uses the same ``sha1(url).jpg`` cache key that :class:`WITDataset` in
+    ``train.py`` looks up at training time, so once every row has been
+    downloaded here, training never needs the network.
+
+    Returns:
+        True if the image ends up cached (already present, or freshly
+        downloaded and decoded), False if it couldn't be fetched or decoded.
+    """
+    path = _image_cache_path(cache_dir, url)
+    if os.path.exists(path):
+        return True
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
+        resp.raise_for_status()
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        tmp_path = path + ".tmp"
+        img.save(tmp_path, format="JPEG", quality=85)
+        os.replace(tmp_path, path)
+        return True
+    except Exception:
+        return False
+
+
+def download_images(
+    rows: list[dict],
+    cache_dir: str,
+    max_workers: int,
+    logger: logging.Logger,
+) -> set[str]:
+    """Download every unique ``image_url`` in *rows* into *cache_dir*.
+
+    Runs downloads concurrently across *max_workers* threads. Already-cached
+    files are skipped, so re-running after a partial/interrupted run only
+    fetches what's still missing.
+
+    Args:
+        rows: Pair dicts, each with an ``image_url`` field.
+        cache_dir: Directory to save cached JPEGs into.
+        max_workers: Number of concurrent download threads.
+        logger: Logger instance.
+
+    Returns:
+        The subset of URLs that ended up successfully cached.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    urls = sorted({row["image_url"] for row in rows})
+    logger.info("Downloading %d unique images -> %s", len(urls), cache_dir)
+
+    ok: set[str] = set()
+    done = 0
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_download_one_image, url, cache_dir): url for url in urls}
+        for future in concurrent.futures.as_completed(futures):
+            url = futures[future]
+            done += 1
+            if future.result():
+                ok.add(url)
+            if done % PROGRESS_EVERY == 0 or done == len(urls):
+                logger.info(
+                    "Downloaded %d/%d images (%d failed so far)",
+                    done, len(urls), done - len(ok),
+                )
+
+    logger.info("Image download complete: %d/%d succeeded", len(ok), len(urls))
+    return ok
 
 
 def _checkpoint_path(output_dir: str, lang_codes: list[str]) -> str:
@@ -598,6 +683,20 @@ def main() -> None:
         "--max-rows", type=int, default=200_000,
         help="Total row cap when --stats-only or --attribution-script-stats is set (default 200 000).",
     )
+    parser.add_argument(
+        "--image-cache-dir", type=str, default=None,
+        help="Directory to download images into (default: <output-dir>/image_cache, "
+             "matching train.py's --image-cache-dir default of ./data/image_cache).",
+    )
+    parser.add_argument(
+        "--download-workers", type=int, default=16,
+        help="Number of concurrent threads used to download images.",
+    )
+    parser.add_argument(
+        "--skip-download", action="store_true",
+        help="Only write wit_pairs.jsonl; don't download images. Useful when the "
+             "images will be fetched separately or are already cached.",
+    )
     args = parser.parse_args()
 
     logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
@@ -624,6 +723,14 @@ def main() -> None:
 
     all_rows: list[dict] = [row for rows in pairs_by_lang.values() for row in rows]
     random.Random(args.seed).shuffle(all_rows)
+
+    if not args.skip_download:
+        cache_dir = args.image_cache_dir or os.path.join(args.output_dir, "image_cache")
+        ok_urls = download_images(all_rows, cache_dir, args.download_workers, logger)
+        before = len(all_rows)
+        all_rows = [row for row in all_rows if row["image_url"] in ok_urls]
+        logger.info("Kept %d/%d pairs with a successfully cached image", len(all_rows), before)
+
     out_path = os.path.join(args.output_dir, "wit_pairs.jsonl")
     _write_jsonl(out_path, all_rows, logger)
 
