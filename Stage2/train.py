@@ -150,6 +150,7 @@ def collate_wit(
     images = [x["image"] for x in valid]
     image_inputs = processor(
         images=images,
+        text=["" for _ in images],
         return_tensors="pt",
         min_pixels=min_pixels,
         max_pixels=max_pixels,
