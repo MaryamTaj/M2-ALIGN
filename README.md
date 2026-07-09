@@ -14,7 +14,7 @@ python Stage1/load_text.py --languages Bengali \
 sbatch Stage1/job-scripts/train.sh
 
 # Load Stage 2 data:
-python Stage2/load_image.py --languages bn --n-per-language 100000 --output-dir ./data
+python Stage2/load_image.py --languages bn --n-per-language 100000 --output-dir Stage2/data
 
 # Train Stage 2 (image):
 sbatch Stage2/job-scripts/train.sh
