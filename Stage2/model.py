@@ -238,7 +238,7 @@ class VisualMindMerger(nn.Module):
             for g in image_grid_thw
         ]
 
-        raw = self.model_llm.visual(pixel_values, grid_thw=image_grid_thw)
+        raw = self.model_llm.model.visual(pixel_values, grid_thw=image_grid_thw)
         # raw: [sum(n_tokens), llm_dim]
 
         B = image_grid_thw.size(0)
