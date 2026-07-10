@@ -180,7 +180,11 @@ def collate_vqa(
 
     images = [x["image"] for x in valid]
     image_inputs = processor(
-        images=images, return_tensors="pt", min_pixels=min_pixels, max_pixels=max_pixels,
+        images=images,
+        text=["" for _ in images],
+        return_tensors="pt",
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
     )
     return {
         "pixel_values": image_inputs["pixel_values"],
