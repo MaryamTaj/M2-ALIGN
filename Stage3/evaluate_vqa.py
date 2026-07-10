@@ -180,7 +180,7 @@ def generate_answer(
     max_llm_seq_len: int,
 ) -> str:
     image_inputs = processor(
-        images=[image], return_tensors="pt", min_pixels=visual_pixels, max_pixels=visual_pixels,
+        images=[image], text=[""], return_tensors="pt", min_pixels=visual_pixels, max_pixels=visual_pixels,
     )
     pixel_values = image_inputs["pixel_values"].to(device)
     image_grid_thw = image_inputs["image_grid_thw"].to(device)
