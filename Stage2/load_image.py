@@ -230,7 +230,16 @@ def _image_cache_path(cache_dir: str, url: str) -> str:
     return os.path.join(cache_dir, cache_key + ".jpg")
 
 
-def _download_one_image(url: str, cache_dir: str) -> bool:
+# Wikimedia throttles/blocks requests whose User-Agent doesn't identify the
+# client and a contact point (https://meta.wikimedia.org/wiki/User-Agent_policy).
+# A generic UA gets a burst of requests through before being rate-limited --
+# which is what caused a 745/28839 success rate in a prior run.
+_DOWNLOAD_HEADERS = {
+    "User-Agent": "M2-ALIGN/1.0 (https://github.com/MaryamTaj/M2-ALIGN)",
+}
+
+
+def _download_one_image(url: str, cache_dir: str) -> str | None:
     """Fetch *url* into the on-disk image cache if not already there.
 
     Uses the same ``sha1(url).jpg`` cache key that :class:`WITDataset` in
@@ -238,22 +247,25 @@ def _download_one_image(url: str, cache_dir: str) -> bool:
     downloaded here, training never needs the network.
 
     Returns:
-        True if the image ends up cached (already present, or freshly
-        downloaded and decoded), False if it couldn't be fetched or decoded.
+        None if the image ends up cached (already present, or freshly
+        downloaded and decoded); otherwise a short string describing why it
+        failed (e.g. an HTTP status code), for aggregating failure reasons.
     """
     path = _image_cache_path(cache_dir, url)
     if os.path.exists(path):
-        return True
+        return None
     try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
+        resp = requests.get(url, timeout=15, headers=_DOWNLOAD_HEADERS)
         resp.raise_for_status()
         img = Image.open(io.BytesIO(resp.content)).convert("RGB")
         tmp_path = path + ".tmp"
         img.save(tmp_path, format="JPEG", quality=85)
         os.replace(tmp_path, path)
-        return True
-    except Exception:
-        return False
+        return None
+    except requests.exceptions.HTTPError as exc:
+        return f"HTTP {exc.response.status_code}"
+    except Exception as exc:
+        return type(exc).__name__
 
 
 def download_images(
@@ -283,13 +295,17 @@ def download_images(
 
     ok: set[str] = set()
     done = 0
+    failure_counts: dict[str, int] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_download_one_image, url, cache_dir): url for url in urls}
         for future in concurrent.futures.as_completed(futures):
             url = futures[future]
             done += 1
-            if future.result():
+            reason = future.result()
+            if reason is None:
                 ok.add(url)
+            else:
+                failure_counts[reason] = failure_counts.get(reason, 0) + 1
             if done % PROGRESS_EVERY == 0 or done == len(urls):
                 logger.info(
                     "Downloaded %d/%d images (%d failed so far)",
@@ -297,6 +313,9 @@ def download_images(
                 )
 
     logger.info("Image download complete: %d/%d succeeded", len(ok), len(urls))
+    if failure_counts:
+        top = sorted(failure_counts.items(), key=lambda kv: -kv[1])[:10]
+        logger.info("Failure reasons (top %d): %s", len(top), dict(top))
     return ok
 
 
