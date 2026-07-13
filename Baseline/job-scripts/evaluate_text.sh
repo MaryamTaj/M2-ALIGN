@@ -31,6 +31,7 @@ MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+EVAL_DATA_DIR="$PROJECT_ROOT/Stage3/data/stage3a_eval"
 
 echo "=== Job info ==="
 date
@@ -61,15 +62,23 @@ mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 echo "LLM_PATH=$LLM_PATH"
+echo "EVAL_DATA_DIR=$EVAL_DATA_DIR"
 echo
 
 if [ ! -d "$LLM_PATH" ]; then
   echo "ERROR: LLM snapshot not found: $LLM_PATH"
   exit 1
 fi
+for LANG in ${LANGS:-en sw bn}; do
+  if [ ! -f "$EVAL_DATA_DIR/$TASK/$LANG.jsonl" ]; then
+    echo "ERROR: Eval data not found: $EVAL_DATA_DIR/$TASK/$LANG.jsonl"
+    echo "       Run: python Stage3/load_text_evaluation.py"
+    exit 1
+  fi
+done
 
 # Build optional args
-EXTRA_ARGS="--local-files-only"
+EXTRA_ARGS="--local-files-only --eval-data-dir $EVAL_DATA_DIR"
 if [ -n "$LANGS" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --langs $LANGS"
 fi

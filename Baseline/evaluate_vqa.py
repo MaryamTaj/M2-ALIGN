@@ -242,7 +242,7 @@ def main() -> None:
     )
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True, help="ISO code (bn/id for xgqa; id/jv for worldcuisines/cvqa).")
-    parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_eval_data.py.")
+    parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
                         help="URL image cache dir (used for worldcuisines/cvqa).")

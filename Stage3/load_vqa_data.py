@@ -3,7 +3,7 @@
 Mirrors MindMerger's own augmentation-training recipe (translate an
 established English task corpus into each target language, keep the
 answer untranslated) and reuses Stage 3a's translation infrastructure
-(`load_text.py`'s `load_nllb`/`translate_batch`).
+(`load_text_data.py`'s `load_nllb`/`translate_batch`).
 
 Why GQA rather than a from-scratch VQA corpus: `xGQA` (the Bengali
 evaluation benchmark used in Stage 3b) is itself a
@@ -40,7 +40,7 @@ from datetime import datetime
 import torch
 from datasets import load_dataset
 
-from load_text import load_nllb, stable_id, write_jsonl
+from load_text_data import load_nllb, stable_id, write_jsonl
 
 # Stage 3b VQA-track language (must already be backfilled into Stage 1's
 # NLLB corpus and Stage 2's WIT config -- see the Stage 3 plan). Indonesian
@@ -185,7 +185,7 @@ def build_language_rows(
     Returns:
         List of JSONL-ready row dicts.
     """
-    # load_text.py's own translate_batch() is hardcoded EN->Swahili (module
+    # load_text_data.py's own translate_batch() is hardcoded EN->Swahili (module
     # constants _NLLB_EN/_NLLB_SW); Stage 3b needs an arbitrary target
     # language, so the translation loop is reimplemented here against the
     # same load_nllb()-loaded tokenizer/model rather than parameterizing

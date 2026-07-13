@@ -14,7 +14,7 @@ python Stage1/load_text.py --languages Bengali \
 sbatch Stage1/job-scripts/train.sh
 
 # Load Stage 2 data:
-python Stage2/load_image.py --languages bn --n-per-language 100000 --output-dir Stage2/data
+python Stage2/load_image.py --languages bn --n-per-language 745 --output-dir Stage2/data
 
 # Train Stage 2 (image):
 sbatch Stage2/job-scripts/train.sh
@@ -25,7 +25,8 @@ python -c "from datasets import load_dataset; load_dataset('lmms-lab/GQA', 'trai
 sbatch Stage3/job-scripts/load_vqa_data.sh
 
 python Stage3/load_text_evaluation.py
-python Stage3/load_vqa_eval_data.py --benchmark xgqa --languages bn
+ls -la Stage3/data/stage3a_eval/mgsm/bn.jsonl Stage3/data/stage3a_eval/msvamp/bn.jsonl
+python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn
 # Download images.zip
 mkdir -p Stage3/data/gqa/images
 wget -P Stage3/data/gqa https://nlp.stanford.edu/data/gqa/images.zip

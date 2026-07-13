@@ -41,11 +41,11 @@ Usage
 -----
     # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
     # resolved relative to this script's own location, not the cwd:
-    python Stage3/load_vqa_eval_data.py --benchmark xgqa --languages bn
+    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn
 
     # Deferred (Indonesian/Javanese) -- kept working for later, not run today:
-    python Stage3/load_vqa_eval_data.py --benchmark worldcuisines --languages id,jv
-    python Stage3/load_vqa_eval_data.py --benchmark cvqa --languages id,jv
+    python Stage3/load_vqa_evaluation.py --benchmark worldcuisines --languages id,jv
+    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages id,jv
 """
 from __future__ import annotations
 

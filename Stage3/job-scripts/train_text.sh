@@ -13,7 +13,7 @@
 
 # Usage: TASK=mgsm sbatch train_text.sh
 #   Supported tasks: mgsm, msvamp (xnli/xcsqa dropped for now — see
-#   Stage3/load_text.py)
+#   Stage3/load_text_data.py)
 #   Reads data from Stage3/data/stage3a/<task>/<task>.jsonl
 #   Warm-starts from Stage 2's vision-mapping checkpoint (chained lineage:
 #   Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)

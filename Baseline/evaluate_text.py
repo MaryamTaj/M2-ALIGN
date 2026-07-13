@@ -18,13 +18,13 @@ is Bulgarian, not Bengali -- and INK-USC/xcsr (X-CSQA) has the same gap.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
 from datetime import datetime
 
 import torch
-from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
 
@@ -111,33 +111,35 @@ def generate_text(
 
 
 # ─── Dataset loaders ────────────────────────────────────────────────────────
+#
+# MGSM/MSVAMP are pre-downloaded to JSONL by Stage3/load_text_evaluation.py
+# (run on a login node with internet access) rather than fetched here via
+# `load_dataset(...)`. Baseline reads the same JSONL directory Stage3's
+# evaluate_text.py reads by default, so both runs score the exact same rows
+# -- see Stage3/evaluate_text.py's docstring for why this benchmark
+# comparison requires that.
 
-def _hf_load(hf_id: str, config: str, split: str) -> list[dict]:
-    try:
-        ds = load_dataset(hf_id, config, split=split, download_mode="reuse_dataset_if_exists")
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to load '{hf_id}' config='{config}' split='{split}': {exc}"
-        ) from exc
-    return list(ds)
+def _read_jsonl(path: str) -> list[dict]:
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Eval data not found: {path}\n"
+            "Run: python Stage3/load_text_evaluation.py"
+        )
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
 
 
-def load_mgsm(lang: str) -> list[dict]:
-    rows = _hf_load("juletxara/mgsm", lang, "test")
-    return [
-        {"question": str(r["question"]),
-         "answer": str(r.get("answer") or r.get("answer_number") or "").replace(",", "")}
-        for r in rows
-    ]
+def load_mgsm(lang: str, eval_data_dir: str) -> list[dict]:
+    return _read_jsonl(os.path.join(eval_data_dir, "mgsm", f"{lang}.jsonl"))
 
 
-def load_msvamp(lang: str) -> list[dict]:
-    rows = _hf_load("Mathoctopus/MSVAMP", lang, "test")
-    return [
-        {"question": str(r.get("m_query") or r.get("query") or ""),
-         "answer": str(r.get("response") or r.get("answer") or "").replace(",", "")}
-        for r in rows
-    ]
+def load_msvamp(lang: str, eval_data_dir: str) -> list[dict]:
+    return _read_jsonl(os.path.join(eval_data_dir, "msvamp", f"{lang}.jsonl"))
 
 
 _LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
@@ -199,6 +201,7 @@ def evaluate_math(
     tokenizer: AutoTokenizer,
     device: torch.device,
     max_examples: int | None,
+    eval_data_dir: str,
     logger: logging.Logger,
 ) -> dict[str, float]:
     loader = _LOADERS[task]
@@ -207,7 +210,7 @@ def evaluate_math(
     total_all = 0
 
     for lang in langs:
-        samples = loader(lang)
+        samples = loader(lang, eval_data_dir)
         if max_examples is not None:
             samples = samples[:max_examples]
 
@@ -258,10 +261,20 @@ def main() -> None:
         help="Cap on examples per language (None = all).",
     )
     parser.add_argument(
+        "--eval-data-dir", type=str, default=None,
+        help="Directory of JSONL eval data written by Stage3/load_text_evaluation.py "
+             "(default: ../Stage3/data/stage3a_eval, resolved relative to this "
+             "script's location, so Baseline scores the same rows as Stage3).",
+    )
+    parser.add_argument(
         "--smoke", action="store_true",
         help="Run 5 examples on the first language only.",
     )
     args = parser.parse_args()
+
+    eval_data_dir = args.eval_data_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "Stage3", "data", "stage3a_eval"
+    )
 
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     logger = setup_logging(log_dir, args.task)
@@ -271,12 +284,12 @@ def main() -> None:
         langs = langs[:1]
         args.max_examples = args.max_examples or 5
 
-    logger.info("Task: %s | Model: %s | Languages: %s | max_examples=%s",
-                args.task, args.model_id, langs, args.max_examples)
+    logger.info("Task: %s | Model: %s | Languages: %s | max_examples=%s | eval_data_dir=%s",
+                args.task, args.model_id, langs, args.max_examples, eval_data_dir)
 
     model, tokenizer, device = load_model(args.model_id, local_files_only=args.local_files_only)
 
-    evaluate_math(args.task, langs, model, tokenizer, device, args.max_examples, logger)
+    evaluate_math(args.task, langs, model, tokenizer, device, args.max_examples, eval_data_dir, logger)
 
 
 if __name__ == "__main__":

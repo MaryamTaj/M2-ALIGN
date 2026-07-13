@@ -102,7 +102,7 @@ if [ ! -f "$MAPPING_CKPT" ]; then
 fi
 if [ ! -f "$EVAL_DATA" ]; then
   echo "ERROR: Eval data not found: $EVAL_DATA"
-  echo "       Run: python Stage3/load_vqa_eval_data.py --benchmark $BENCHMARK --languages $LANG"
+  echo "       Run: python Stage3/load_vqa_evaluation.py --benchmark $BENCHMARK --languages $LANG"
   exit 1
 fi
 if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then

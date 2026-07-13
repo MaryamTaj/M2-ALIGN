@@ -17,7 +17,7 @@
 # VQA training did to the model:
 #   TASK=mgsm   sbatch evaluate_text.sh
 #   TASK=msvamp sbatch evaluate_text.sh
-# (xnli/xcsqa dropped for now — see Stage3/load_text.py)
+# (xnli/xcsqa dropped for now — see Stage3/load_text_data.py)
 #
 # Optional overrides:
 #   TASK=mgsm LANGS="sw bn en zh" sbatch evaluate_text.sh
@@ -39,6 +39,7 @@ STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
+EVAL_DATA_DIR="$STAGE3/data/stage3a_eval"
 
 # Stage3b checkpoints (the default -- VQA-trained, warm-started directly
 # from Stage 2) are saved by Stage3/job-scripts/train_vqa.sh. Stage3a
@@ -92,6 +93,7 @@ export TRANSFORMERS_OFFLINE=1
 echo "LLM_PATH=$LLM_PATH"
 echo "MT_PATH=$MT_PATH"
 echo "MAPPING_CKPT=$MAPPING_CKPT"
+echo "EVAL_DATA_DIR=$EVAL_DATA_DIR"
 echo
 
 if [ -f "$PROJECT_ROOT/.tokens" ]; then
@@ -120,6 +122,13 @@ if [ ! -f "$MAPPING_CKPT" ]; then
   fi
   exit 1
 fi
+for LANG in $LANGS; do
+  if [ ! -f "$EVAL_DATA_DIR/$EVAL_TASK/$LANG.jsonl" ]; then
+    echo "ERROR: Eval data not found: $EVAL_DATA_DIR/$EVAL_TASK/$LANG.jsonl"
+    echo "       Run: python Stage3/load_text_evaluation.py"
+    exit 1
+  fi
+done
 
 # Build optional args.
 EXTRA_ARGS="--local-files-only"
@@ -133,10 +142,11 @@ echo "=== Start $CHECKPOINT_STAGE text evaluation: $EVAL_TASK ==="
 cd "$PROJECT_ROOT"
 # shellcheck disable=SC2086
 python -u Stage3/evaluate_text.py \
-  --task         "$EVAL_TASK" \
-  --llm-path     "$LLM_PATH" \
-  --mt-path      "$MT_PATH" \
-  --mapping-ckpt "$MAPPING_CKPT" \
+  --task          "$EVAL_TASK" \
+  --llm-path      "$LLM_PATH" \
+  --mt-path       "$MT_PATH" \
+  --mapping-ckpt  "$MAPPING_CKPT" \
+  --eval-data-dir "$EVAL_DATA_DIR" \
   --max-mt-seq-len  256 \
   --max-llm-seq-len 2048 \
   --max-gen-len     512 \

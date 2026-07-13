@@ -4,7 +4,7 @@ Loads the trained AugmentedVisualMindMerger (NLLB encoder -> mapping ->
 frozen Qwen3-VL + LLM-side query prefix) and evaluates on whichever of
 xGQA / WorldCuisines / CVQA applies per language (see the Stage 3 plan's
 language survey). No NLLB-translated data is ever used here -- only the
-JSONL files produced by load_vqa_eval_data.py (real/native benchmarks).
+JSONL files produced by load_vqa_evaluation.py (real/native benchmarks).
 
 Run this against the Stage 2 checkpoint (zero-shot, no VQA training yet --
 the primary hypothesis's "before" reference point) and again against the
@@ -319,7 +319,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True, help="ISO code (bn/id for xgqa; id/jv for worldcuisines/cvqa).")
-    parser.add_argument("--eval-data", required=True, help="JSONL from load_vqa_eval_data.py.")
+    parser.add_argument("--eval-data", required=True, help="JSONL from load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
                         help="URL image cache dir (used for worldcuisines/cvqa).")

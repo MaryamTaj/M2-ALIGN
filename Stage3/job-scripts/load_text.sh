@@ -20,7 +20,7 @@
 # xnli/xcsqa are not built here: standard XNLI's language list is
 # ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg" is Bulgarian, not
 # Bengali -- and INK-USC/xcsr (X-CSQA) has the same gap. Both tasks are
-# dropped from Stage 3a entirely for now (see Stage3/load_text.py).
+# dropped from Stage 3a entirely for now (see Stage3/load_text_data.py).
 #
 # BEFORE SUBMITTING: run the following on a login node (internet access) to
 # populate the HuggingFace cache that this job reads offline:
@@ -89,7 +89,7 @@ for LANG in "${LANGUAGES[@]}"; do
   # mgsm and msvamp use identical training data; translate once, symlink second.
   # ---------------------------------------------------------------------
   echo "=== [$LANG] Math (MetaMathQA -> $LANG) ==="
-  python -u Stage3/load_text.py \
+  python -u Stage3/load_text_data.py \
     --task        mgsm \
     --language    "$LANG" \
     --output_dir  "$DATA_DIR/mgsm" \

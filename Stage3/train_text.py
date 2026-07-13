@@ -43,7 +43,7 @@ NLLB_LANG_MAP = {
     "Wolof": "wol_Latn",
     "French": "fra_Latn",
     # Bengali is the Stage 3b VQA language; also trained here directly
-    # (math translated — see Stage3/load_text.py) so this stage is no
+    # (math translated — see Stage3/load_text_data.py) so this stage is no
     # longer Swahili-only.
     "Bengali": "ben_Beng",
 }

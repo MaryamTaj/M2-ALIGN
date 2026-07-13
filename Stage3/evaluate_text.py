@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import json
 import logging
 import os
 import re
 from datetime import datetime
 
 import torch
-from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
@@ -221,33 +221,33 @@ def generate_text(
 
 
 # ─── Dataset loaders ────────────────────────────────────────────────────────
+#
+# MGSM/MSVAMP are pre-downloaded to JSONL by load_text_evaluation.py (run on
+# a login node with internet access) rather than fetched here via
+# `load_dataset(...)`, so evaluation reads a local, inspectable file instead
+# of depending on the shared HuggingFace `datasets` cache still being warm.
 
-def _hf_load(hf_id: str, config: str, split: str) -> list[dict]:
-    try:
-        ds = load_dataset(hf_id, config, split=split, download_mode="reuse_dataset_if_exists")
-    except Exception as exc:
-        raise RuntimeError(
-            f"Failed to load '{hf_id}' config='{config}' split='{split}': {exc}"
-        ) from exc
-    return list(ds)
+def _read_jsonl(path: str) -> list[dict]:
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"Eval data not found: {path}\n"
+            "Run: python Stage3/load_text_evaluation.py"
+        )
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
 
 
-def load_mgsm(lang: str) -> list[dict]:
-    rows = _hf_load("juletxara/mgsm", lang, "test")
-    return [
-        {"question": str(r["question"]),
-         "answer": str(r.get("answer") or r.get("answer_number") or "").replace(",", "")}
-        for r in rows
-    ]
+def load_mgsm(lang: str, eval_data_dir: str) -> list[dict]:
+    return _read_jsonl(os.path.join(eval_data_dir, "mgsm", f"{lang}.jsonl"))
 
 
-def load_msvamp(lang: str) -> list[dict]:
-    rows = _hf_load("Mathoctopus/MSVAMP", lang, "test")
-    return [
-        {"question": str(r.get("m_query") or r.get("query") or ""),
-         "answer": str(r.get("response") or r.get("answer") or "").replace(",", "")}
-        for r in rows
-    ]
+def load_msvamp(lang: str, eval_data_dir: str) -> list[dict]:
+    return _read_jsonl(os.path.join(eval_data_dir, "msvamp", f"{lang}.jsonl"))
 
 
 _LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
@@ -321,6 +321,7 @@ def evaluate_math(
     max_examples: int | None,
     max_mt_seq_len: int,
     max_llm_seq_len: int,
+    eval_data_dir: str,
     logger: logging.Logger,
 ) -> dict[str, float]:
     loader = _LOADERS[task]
@@ -334,7 +335,7 @@ def evaluate_math(
             logger.warning("No NLLB code for '%s'; skipping.", lang)
             continue
 
-        samples = loader(lang)
+        samples = loader(lang, eval_data_dir)
         if max_examples is not None:
             samples = samples[:max_examples]
 
@@ -398,10 +399,20 @@ def main() -> None:
     parser.add_argument("--max-llm-seq-len", type=int, default=2048)
     parser.add_argument("--max-gen-len", type=int, default=512)
     parser.add_argument(
+        "--eval-data-dir", type=str, default=None,
+        help="Directory of JSONL eval data written by load_text_evaluation.py "
+             "(default: Stage3/data/stage3a_eval, resolved relative to this "
+             "script's location).",
+    )
+    parser.add_argument(
         "--smoke", action="store_true",
         help="Run 5 examples on the first language only.",
     )
     args = parser.parse_args()
+
+    eval_data_dir = args.eval_data_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "data", "stage3a_eval"
+    )
 
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     logger = setup_logging(log_dir, args.task)
@@ -412,8 +423,8 @@ def main() -> None:
         args.max_examples = args.max_examples or 5
 
     logger.info(
-        "Task: %s | MT: %s | LLM: %s | Languages: %s | max_examples=%s",
-        args.task, args.mt_path, args.llm_path, langs, args.max_examples,
+        "Task: %s | MT: %s | LLM: %s | Languages: %s | max_examples=%s | eval_data_dir=%s",
+        args.task, args.mt_path, args.llm_path, langs, args.max_examples, eval_data_dir,
     )
 
     model, tokenizer_mt, tokenizer_llm, device, amp_dtype = load_model(
@@ -434,6 +445,7 @@ def main() -> None:
         max_examples=args.max_examples,
         max_mt_seq_len=args.max_mt_seq_len,
         max_llm_seq_len=args.max_llm_seq_len,
+        eval_data_dir=eval_data_dir,
         logger=logger,
     )
 
