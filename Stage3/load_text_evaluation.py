@@ -46,9 +46,7 @@ TASKS: dict[str, str] = {
     "msvamp": "Mathoctopus/MSVAMP",
 }
 
-# English + Swahili + Bengali (Bengali is the Stage 3 VQA-track language;
-# mgsm/msvamp already have native bn coverage).
-DEFAULT_LANGS: list[str] = ["en", "sw", "bn"]
+DEFAULT_LANGS: list[str] = ["en"]
 
 
 def setup_logging(log_dir: str) -> logging.Logger:

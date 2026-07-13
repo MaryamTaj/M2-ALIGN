@@ -24,8 +24,7 @@ export HF_HOME="$SCRATCH/huggingface"
 python -c "from datasets import load_dataset; load_dataset('lmms-lab/GQA', 'train_balanced_instructions', split='train')"
 sbatch Stage3/job-scripts/load_vqa_data.sh
 
-python Stage3/load_text_evaluation.py
-ls -la Stage3/data/stage3a_eval/mgsm/bn.jsonl Stage3/data/stage3a_eval/msvamp/bn.jsonl
+python Stage3/load_text_evaluation.py --languages bn
 python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn
 # Download images.zip
 mkdir -p Stage3/data/gqa/images
