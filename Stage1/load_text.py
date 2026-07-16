@@ -66,7 +66,12 @@ def download_language(
     config = "-".join(sorted([NLLB_ENGLISH, source_code]))
 
     logger.info("Loading NLLB config=%s split=%s target=%d samples", config, split, n_samples)
-    ds = load_dataset("allenai/nllb", config, split=split, streaming=streaming)
+    # allenai/nllb ships a loading script (nllb.py) with no script-free parquet mirror
+    # available; datasets>=4.0 removed script execution entirely, so this requires
+    # datasets<4.0 with trust_remote_code=True (see Stage2/load_image.py's docstring for
+    # the same class of problem with the old google/WIT, which did have a parquet mirror
+    # to migrate to -- this dataset doesn't).
+    ds = load_dataset("allenai/nllb", config, split=split, streaming=streaming, trust_remote_code=True)
 
     out_path = os.path.join(output_dir, f"{source_lang}_to_English.jsonl")
     kept = 0
