@@ -239,6 +239,16 @@ _DOWNLOAD_HEADERS = {
 }
 
 
+# Statuses worth retrying: 429 is Wikimedia's rate limiter (not a dead
+# image), 5xx are usually transient. A burst of concurrent requests
+# routinely trips 429 even with a compliant User-Agent (see the note on
+# _DOWNLOAD_HEADERS) -- backing off and retrying recovers most of these,
+# whereas treating 429 as permanent (the previous behaviour) silently
+# dropped the pair instead.
+_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+_MAX_RETRIES = 5
+
+
 def _download_one_image(url: str, cache_dir: str) -> str | None:
     """Fetch *url* into the on-disk image cache if not already there.
 
@@ -254,18 +264,25 @@ def _download_one_image(url: str, cache_dir: str) -> str | None:
     path = _image_cache_path(cache_dir, url)
     if os.path.exists(path):
         return None
-    try:
-        resp = requests.get(url, timeout=15, headers=_DOWNLOAD_HEADERS)
-        resp.raise_for_status()
-        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-        tmp_path = path + ".tmp"
-        img.save(tmp_path, format="JPEG", quality=85)
-        os.replace(tmp_path, path)
-        return None
-    except requests.exceptions.HTTPError as exc:
-        return f"HTTP {exc.response.status_code}"
-    except Exception as exc:
-        return type(exc).__name__
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = requests.get(url, timeout=15, headers=_DOWNLOAD_HEADERS)
+            resp.raise_for_status()
+            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            tmp_path = path + ".tmp"
+            img.save(tmp_path, format="JPEG", quality=85)
+            os.replace(tmp_path, path)
+            return None
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code
+            if status not in _RETRYABLE_STATUSES or attempt == _MAX_RETRIES - 1:
+                return f"HTTP {status}"
+            retry_after = exc.response.headers.get("Retry-After", "")
+            wait = float(retry_after) if retry_after.isdigit() else min(30, 2 ** attempt)
+            time.sleep(wait)
+        except Exception as exc:
+            return type(exc).__name__
+    return "HTTP 429 (exhausted retries)"
 
 
 def download_images(
@@ -708,8 +725,9 @@ def main() -> None:
              "matching train.py's --image-cache-dir default of ./data/image_cache).",
     )
     parser.add_argument(
-        "--download-workers", type=int, default=16,
-        help="Number of concurrent threads used to download images.",
+        "--download-workers", type=int, default=4,
+        help="Number of concurrent threads used to download images. Kept low by default "
+             "since Wikimedia's image hosts rate-limit (HTTP 429) aggressive bursts.",
     )
     parser.add_argument(
         "--skip-download", action="store_true",
