@@ -31,6 +31,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import random
@@ -49,6 +50,9 @@ from load_text_data import load_nllb, stable_id, write_jsonl
 # Bengali) -- add them back here the same way if the VQA track is widened.
 LANG_TO_NLLB: dict[str, str] = {
     "Bengali": "ben_Beng",
+    "Russian": "rus_Cyrl",
+    "German": "deu_Latn",
+    "Chinese": "zho_Hans",
 }
 
 DEFAULT_N_SAMPLES = 30_000
@@ -232,12 +236,21 @@ def main() -> None:
         help="Comma-separated language names (must be keys of LANG_TO_NLLB).",
     )
     parser.add_argument("--n_samples", type=int, default=DEFAULT_N_SAMPLES,
-                        help="Target GQA questions sampled before translation (shared across languages).")
+                        help="Target GQA questions sampled before translation (shared across languages). "
+                             "Ignored if --gqa_jsonl is given.")
     parser.add_argument("--output_dir", type=str, default="./data/stage3b")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Ignored if --gqa_jsonl is given (the JSONL was already sampled with its own seed).")
     parser.add_argument("--nllb_model", type=str, default="facebook/nllb-200-3.3B")
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_beams", type=int, default=4)
+    parser.add_argument(
+        "--gqa_jsonl", type=str, default=None,
+        help="Path to a JSONL of {question, answer, vg_image_id} rows produced offline by "
+             "Stage3/dump_gqa_sample.py (run on a login-node-free workstation, then Globus-transferred "
+             "here). When given, this script never calls load_dataset() itself -- no network access "
+             "needed on Narval for this step at all.",
+    )
     args = parser.parse_args()
 
     logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
@@ -249,7 +262,13 @@ def main() -> None:
 
     # Sample GQA once; translate the *same* underlying questions into every
     # language so results are comparable across languages.
-    gqa_rows = sample_gqa(args.n_samples, args.seed, logger)
+    if args.gqa_jsonl:
+        logger.info("Loading pre-sampled GQA rows from %s (no network access)", args.gqa_jsonl)
+        with open(args.gqa_jsonl, encoding="utf-8") as f:
+            gqa_rows = [json.loads(line) for line in f if line.strip()]
+        logger.info("Loaded %d pre-sampled GQA rows", len(gqa_rows))
+    else:
+        gqa_rows = sample_gqa(args.n_samples, args.seed, logger)
 
     os.makedirs(args.output_dir, exist_ok=True)
     for lang in langs:

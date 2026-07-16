@@ -29,6 +29,9 @@ LANG_TO_NLLB = {
     # Indonesian/Javanese were scoped out for now -- add back the same way
     # if/when the VQA track is widened again.
     "Bengali": "ben_Beng",
+    "Russian": "rus_Cyrl",
+    "German": "deu_Latn",
+    "Chinese": "zho_Hans",
 }
 
 

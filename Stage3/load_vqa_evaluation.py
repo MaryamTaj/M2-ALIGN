@@ -59,7 +59,7 @@ import requests
 from datasets import load_dataset
 
 XGQA_RAW_BASE = "https://raw.githubusercontent.com/adapter-hub/xGQA/master/data/zero_shot"
-XGQA_LANGS = {"bn"}  # xGQA also has "id" (Indonesian, deferred for now) among its 8 languages
+XGQA_LANGS = {"bn", "de", "ru", "zh"}  # xGQA also has "id"/"ko"/"pt" (deferred for now) among its 8 languages
 
 # Candidate substrings to match against WorldCuisines' `lang` field and
 # CVQA's `Subset` field. Verify the actual match against the logged
