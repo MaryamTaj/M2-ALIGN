@@ -12,7 +12,7 @@
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_train_%x_%j.log
 
 # Per-language Stage 2 training -- warm-starts from that language's own
-# Stage 1 checkpoint (Stage1/outputs/M2-ALIGN-$LANG) and saves its own
+# Stage 1 checkpoint (Stage1/outputs/$LANG) and saves its own
 # checkpoint, independent of the other languages and of Bengali's
 # Stage2/outputs/wit. Image cache dir is shared across all languages
 # (keyed by URL hash -- no collision, avoids redundant downloads).
@@ -23,7 +23,7 @@
 #   LANG=zh sbatch --job-name=stage2_train_zh train_lang.sh
 #
 # Reads Stage2/data/$LANG/wit_pairs.jsonl
-# Saves Stage2/outputs/wit_$LANG/mapping/pytorch_model.bin
+# Saves Stage2/outputs/$LANG/mapping/pytorch_model.bin
 
 set -euo pipefail
 
@@ -35,10 +35,10 @@ STAGE2="$PROJECT_ROOT/Stage2"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE1_MAPPING_CKPT="$STAGE1/outputs/M2-ALIGN-$LANG/nllb_corpus/mapping/pytorch_model.bin"
+STAGE1_MAPPING_CKPT="$STAGE1/outputs/$LANG/mapping/pytorch_model.bin"
 
 DATA_PATH="$STAGE2/data/$LANG/wit_pairs.jsonl"
-OUTPUT_DIR="$STAGE2/outputs/wit_$LANG"
+OUTPUT_DIR="$STAGE2/outputs/$LANG"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do

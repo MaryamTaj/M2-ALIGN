@@ -214,7 +214,14 @@ def main(args, logger: logging.Logger) -> None:
     task = args.task
     augmentation = args.augmentation
     save_name = args.save_name
-    output_model_path_base = f"./outputs/{save_name}/{task}/{stage_name}/"
+    if args.output_dir:
+        # Flat override for per-language pipelines that don't want the
+        # {save_name}/{task}/{stage_name} nesting (e.g. Stage1/outputs/ru/mapping/
+        # instead of Stage1/outputs/M2-ALIGN-ru/nllb_corpus/mapping/). Existing
+        # callers that don't pass --output_dir keep the original nested layout.
+        output_model_path_base = args.output_dir.rstrip("/") + "/"
+    else:
+        output_model_path_base = f"./outputs/{save_name}/{task}/{stage_name}/"
 
     languages: list[str]
     if stage_name == "mapping":
@@ -443,6 +450,12 @@ if __name__ == "__main__":
     parser.add_argument("--llm_path", type=str, default="../LLMs/Llama-2-7b-hf/")
     parser.add_argument("--mt_path", type=str, default="../LLMs/mt5-xl/")
     parser.add_argument("--save_name", type=str, default="MindMerger")
+    parser.add_argument(
+        "--output_dir", type=str, default=None,
+        help="Flat checkpoint directory override, e.g. Stage1/outputs/ru -- when given, "
+             "checkpoints go directly to <output_dir>/mapping/pytorch_model.bin instead of "
+             "the default ./outputs/{save_name}/{task}/{stage_name}/ nesting.",
+    )
     parser.add_argument("--task", type=str, default="translation")
     parser.add_argument("--stage_name", type=str, default="mapping")
     parser.add_argument("--lr", type=float, default=2e-5)

@@ -21,7 +21,7 @@
 #   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
 #
-# Saves to Stage1/outputs/M2-ALIGN-$LANG/nllb_corpus/mapping/pytorch_model.bin
+# Saves to Stage1/outputs/$LANG/mapping/pytorch_model.bin
 
 set -euo pipefail
 
@@ -111,6 +111,7 @@ deepspeed --master_port "${PORTS[$LANG]}" train.py --deepspeed \
   --llm_path "$LLM_PATH" \
   --mt_path "$MT_PATH" \
   --save_name "M2-ALIGN-$LANG" \
+  --output_dir "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1/outputs/$LANG" \
   --stage_name mapping \
   --task nllb_corpus \
   --augmentation False \

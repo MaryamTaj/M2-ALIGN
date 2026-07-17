@@ -12,10 +12,10 @@
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3b_train_vqa_%x_%j.log
 
 # Per-language Stage 3b VQA training (AugmentedVisualMindMerger).
-#   Reads Stage3/data/stage3b_$LANG/*.jsonl
-#   Warm-starts from Stage2/outputs/wit_$LANG (that language's own Stage 2
+#   Reads Stage3/data/$LANG.jsonl (a single flat file, not a directory)
+#   Warm-starts from Stage2/outputs/$LANG (that language's own Stage 2
 #   checkpoint, NOT Bengali's Stage2/outputs/wit)
-#   Saves Stage3/outputs/stage3b_$LANG/mapping/pytorch_model.bin
+#   Saves Stage3/outputs/$LANG/mapping/pytorch_model.bin
 #   Reuses the shared GQA_IMAGES_DIR (same underlying images across
 #   languages -- see load_vqa_data_lang.sh).
 #
@@ -35,10 +35,10 @@ STAGE3="$PROJECT_ROOT/Stage3"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
-STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit_$LANG/mapping/pytorch_model.bin"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/$LANG/mapping/pytorch_model.bin"
 
-DATA_DIR="$STAGE3/data/stage3b_$LANG"
-OUTPUT_DIR="$STAGE3/outputs/stage3b_$LANG"
+DATA_DIR="$STAGE3/data/$LANG.jsonl"
+OUTPUT_DIR="$STAGE3/outputs/$LANG"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -108,8 +108,8 @@ if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
   echo "       Run: LANG=$LANG sbatch Stage2/job-scripts/train_lang.sh"
   exit 1
 fi
-if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
-  echo "ERROR: No .jsonl files found in DATA_DIR: $DATA_DIR"
+if [ ! -f "$DATA_DIR" ]; then
+  echo "ERROR: Data file not found: $DATA_DIR"
   echo "       Run: LANG=$LANG sbatch Stage3/job-scripts/load_vqa_data_lang.sh"
   exit 1
 fi

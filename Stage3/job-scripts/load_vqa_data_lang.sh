@@ -12,21 +12,21 @@
 #SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3b_load_vqa_%x_%j.log
 
 # Per-language Stage 3b VQA training data: GQA (English) -> NLLB-3.3B
-# translation into one target language at a time. Separate output dir per
-# language -- does not touch Bengali's Stage3/data/stage3b.
+# translation into one target language at a time. Writes a single flat file
+# per language (Stage3/data/$LANG.jsonl) -- does not touch Bengali's
+# Stage3/data/stage3b.
 #
-# Reads the pre-sampled GQA rows from Stage3/data/gqa_raw_sample.jsonl
-# (produced offline by Stage3/dump_gqa_sample.py on a workstation and
-# Globus-transferred here -- see the README) instead of calling
-# load_dataset() itself, so this job makes NO network calls at all, not
-# even to the pre-warmed HF cache. That JSONL is sampled once with a fixed
-# seed and is independent of target language, so the SAME file is reused
-# for ru/de/zh (and was for Bengali too) -- meaning the vg_image_ids in
-# every stage3b_<lang>/*.jsonl and every gqa_raw_sample.jsonl-derived file
-# are identical across languages. The vg_image_ids here should therefore
-# already be covered by whatever's in Stage3/data/gqa/images/ from the
-# Bengali run -- verify with the id-diff check in the README before
-# assuming no new images.zip extraction is needed.
+# Reads the pre-sampled GQA rows from Stage3/data/english.jsonl (produced
+# offline by Stage3/dump_gqa_sample.py on a workstation and Globus-
+# transferred here -- see the README) instead of calling load_dataset()
+# itself, so this job makes NO network calls at all, not even to the
+# pre-warmed HF cache. That JSONL is sampled once with a fixed seed and is
+# independent of target language, so the SAME file is reused for ru/de/zh
+# (and was for Bengali too) -- meaning the vg_image_ids referenced by every
+# per-language output file are identical across languages. The vg_image_ids
+# here should therefore already be covered by whatever's in
+# Stage3/data/gqa/images/ from the Bengali run -- verify with the id-diff
+# check in the README before assuming no new images.zip extraction is needed.
 #
 # The NLLB-200-3.3B model weights are assumed already downloaded at NLLB_MODEL.
 #
@@ -47,8 +47,9 @@ fi
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 NLLB_MODEL="$HOME/.cache/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/1a07f7d195896b2114afcb79b7b57ab512e7b43e"
-DATA_DIR="$PROJECT_ROOT/Stage3/data/stage3b_$LANG"
-GQA_JSONL="$PROJECT_ROOT/Stage3/data/gqa_raw_sample.jsonl"
+DATA_DIR="$PROJECT_ROOT/Stage3/data"
+OUT_FILE="$DATA_DIR/$LANG.jsonl"
+GQA_JSONL="$DATA_DIR/english.jsonl"
 
 echo "=== Job info ==="
 date
@@ -102,8 +103,14 @@ python -u Stage3/load_vqa_data.py \
   --batch_size  32 \
   --num_beams   4
 
+# load_vqa_data.py writes <output_dir>/<lang name, lowercased>.jsonl (e.g.
+# Stage3/data/russian.jsonl) -- rename to the flat $LANG.jsonl convention.
+WRITTEN_FILE="$DATA_DIR/$(echo "$LANG_NAME" | tr '[:upper:]' '[:lower:]').jsonl"
+if [ -e "$WRITTEN_FILE" ]; then
+  mv "$WRITTEN_FILE" "$OUT_FILE"
+fi
+
 echo "=== Done ==="
 echo "Output:"
-f="$DATA_DIR/$(echo "$LANG_NAME" | tr '[:upper:]' '[:lower:]').jsonl"
-if [ -e "$f" ]; then wc -l "$f"; else echo "MISSING: $f"; fi
+if [ -e "$OUT_FILE" ]; then wc -l "$OUT_FILE"; else echo "MISSING: $OUT_FILE"; fi
 date

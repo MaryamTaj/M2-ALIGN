@@ -318,9 +318,14 @@ def main(args, logger: logging.Logger) -> None:
     if device.type != "cuda":
         raise RuntimeError("Stage 3b VQA augmentation expects CUDA.")
 
-    jsonl_files = sorted(glob.glob(os.path.join(args.data_dir, "*.jsonl")))
-    if not jsonl_files:
-        raise FileNotFoundError(f"No .jsonl files found in --data-dir: {args.data_dir}")
+    if os.path.isfile(args.data_dir):
+        # Per-language pipelines pass a single flat file (e.g. Stage3/data/ru.jsonl)
+        # rather than a directory to glob.
+        jsonl_files = [args.data_dir]
+    else:
+        jsonl_files = sorted(glob.glob(os.path.join(args.data_dir, "*.jsonl")))
+        if not jsonl_files:
+            raise FileNotFoundError(f"No .jsonl files found in --data-dir: {args.data_dir}")
     rows: list[dict] = []
     for path in jsonl_files:
         file_rows = read_jsonl(path)
@@ -479,7 +484,8 @@ def main(args, logger: logging.Logger) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 3b: train the VQA-augmented mapping layer.")
     parser.add_argument("--data-dir", type=str, required=True,
-                        help="Directory containing GQA-translated *.jsonl files from load_vqa_data.py.")
+                        help="Directory containing GQA-translated *.jsonl files from load_vqa_data.py, "
+                             "or a path to a single .jsonl file directly.")
     parser.add_argument("--images-dir", type=str, required=True,
                         help="Local GQA images directory (extract https://nlp.stanford.edu/data/gqa/images.zip).")
     parser.add_argument("--output-dir", type=str, required=True)
