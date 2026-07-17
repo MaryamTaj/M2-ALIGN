@@ -40,9 +40,9 @@ GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 EVAL_DATA="$STAGE3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
 
 if [ "$CHECKPOINT_STAGE" = "stage2" ]; then
-  MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE2/outputs/wit/pytorch_model.bin"
 else
-  MAPPING_CKPT="$STAGE3/outputs/stage3b/mapping/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE3/outputs/stage3b/pytorch_model.bin"
 fi
 
 if [ -d "$MT_PATH" ]; then

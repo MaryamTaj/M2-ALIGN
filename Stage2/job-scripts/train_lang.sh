@@ -22,8 +22,8 @@
 #   LANG=de sbatch --job-name=stage2_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage2_train_zh train_lang.sh
 #
-# Reads Stage2/data/$LANG/wit_pairs.jsonl
-# Saves Stage2/outputs/$LANG/mapping/pytorch_model.bin
+# Reads Stage2/data/$LANG/wit_pairs.jsonl and Stage1/outputs/$LANG/pytorch_model.bin
+# Saves Stage2/outputs/$LANG/pytorch_model.bin
 
 set -euo pipefail
 
@@ -35,7 +35,7 @@ STAGE2="$PROJECT_ROOT/Stage2"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE1_MAPPING_CKPT="$STAGE1/outputs/$LANG/mapping/pytorch_model.bin"
+STAGE1_MAPPING_CKPT="$STAGE1/outputs/$LANG/pytorch_model.bin"
 
 DATA_PATH="$STAGE2/data/$LANG/wit_pairs.jsonl"
 OUTPUT_DIR="$STAGE2/outputs/$LANG"

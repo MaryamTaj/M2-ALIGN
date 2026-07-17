@@ -45,9 +45,9 @@ EVAL_DATA_DIR="$STAGE3/data/stage3a_eval"
 # from Stage 2) are saved by Stage3/job-scripts/train_vqa.sh. Stage3a
 # checkpoints (legacy, text-only) are saved by Stage3/job-scripts/train_text.sh.
 if [ "$CHECKPOINT_STAGE" = "stage3b" ]; then
-  MAPPING_CKPT="$STAGE3/outputs/stage3b/mapping/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE3/outputs/stage3b/pytorch_model.bin"
 else
-  MAPPING_CKPT="$STAGE3/outputs/stage3a/$TASK/mapping/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE3/outputs/stage3a/$TASK/pytorch_model.bin"
 fi
 
 EVAL_TASK="$TASK"

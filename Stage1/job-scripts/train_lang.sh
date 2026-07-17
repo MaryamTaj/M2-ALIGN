@@ -21,7 +21,7 @@
 #   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
 #
-# Saves to Stage1/outputs/$LANG/mapping/pytorch_model.bin
+# Saves to Stage1/outputs/$LANG/pytorch_model.bin
 
 set -euo pipefail
 

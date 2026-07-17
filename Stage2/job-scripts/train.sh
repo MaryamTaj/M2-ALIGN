@@ -15,7 +15,7 @@
 #   Reads data from Stage2/data/wit_pairs.jsonl (see Stage2/load_image.py)
 #   Warm-starts the Mapping layer from Stage 1's checkpoint (chained
 #   lineage: Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
-#   Saves checkpoint to Stage2/outputs/wit/mapping/pytorch_model.bin
+#   Saves checkpoint to Stage2/outputs/wit/pytorch_model.bin
 
 set -euo pipefail
 

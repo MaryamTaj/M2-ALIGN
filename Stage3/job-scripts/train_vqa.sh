@@ -17,7 +17,7 @@
 #   lineage: Stage 1 -> Stage 2 -> Stage 3 (VQA)). Stage 3a (text-only
 #   augmentation) is no longer part of the pipeline -- see train_text.py /
 #   train_text.sh if you want to run it separately.
-#   Saves checkpoint to Stage3/outputs/stage3b/mapping/pytorch_model.bin
+#   Saves checkpoint to Stage3/outputs/stage3b/pytorch_model.bin
 #
 # BEFORE SUBMITTING: download and extract GQA's official image archive
 # (https://nlp.stanford.edu/data/gqa/images.zip) to GQA_IMAGES_DIR below.
@@ -33,7 +33,7 @@ STAGE3="$PROJECT_ROOT/Stage3"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
-STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/pytorch_model.bin"
 
 DATA_DIR="$STAGE3/data/stage3b"
 OUTPUT_DIR="$STAGE3/outputs/stage3b"

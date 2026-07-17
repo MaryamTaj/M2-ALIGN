@@ -308,7 +308,7 @@ def save_mapping_checkpoint(path: str, model: AugmentedMindMerger, step: int, lo
 
     Args:
         path: Full file path for the checkpoint (e.g.
-            ``"outputs/augmentation/mapping/pytorch_model.bin"``).
+            ``"outputs/augmentation/pytorch_model.bin"``).
         model: The :class:`AugmentedMindMerger` whose mapping to save.
         step: Global training step at which the checkpoint was saved.
         loss: Validation loss at this checkpoint.
@@ -633,7 +633,7 @@ def main(args, logger: logging.Logger) -> None:
 
         if val_loss < best_val:
             best_val = val_loss
-            ckpt_path = os.path.join(args.output_dir, "mapping", "pytorch_model.bin")
+            ckpt_path = os.path.join(args.output_dir, "pytorch_model.bin")
             save_mapping_checkpoint(ckpt_path, model, global_step, val_loss)
             logger.info("Saved best checkpoint (val_loss=%.4f) to %s", val_loss, ckpt_path)
 

@@ -17,7 +17,7 @@
 #   Reads data from Stage3/data/stage3a/<task>/<task>.jsonl
 #   Warm-starts from Stage 2's vision-mapping checkpoint (chained lineage:
 #   Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
-#   Saves checkpoint to Stage3/outputs/stage3a/<task>/mapping/pytorch_model.bin
+#   Saves checkpoint to Stage3/outputs/stage3a/<task>/pytorch_model.bin
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ STAGE3="$PROJECT_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/mapping/pytorch_model.bin"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/pytorch_model.bin"
 
 DATA_DIR="$STAGE3/data/stage3a/$TASK"
 OUTPUT_DIR="$STAGE3/outputs/stage3a/$TASK"

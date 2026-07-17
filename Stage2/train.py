@@ -546,7 +546,7 @@ def main(args, logger: logging.Logger) -> None:
 
         if val_loss < best_val:
             best_val = val_loss
-            ckpt_path = os.path.join(args.output_dir, "mapping", "pytorch_model.bin")
+            ckpt_path = os.path.join(args.output_dir, "pytorch_model.bin")
             save_checkpoint(ckpt_path, model, global_step, val_loss)
             logger.info("Saved best checkpoint (val_loss=%.4f) → %s", val_loss, ckpt_path)
 

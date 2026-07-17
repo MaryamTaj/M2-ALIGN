@@ -384,7 +384,7 @@ def main() -> None:
     parser.add_argument("--mt-path", default="facebook/nllb-200-distilled-600M")
     parser.add_argument(
         "--mapping-ckpt",
-        default="./outputs/augmentation/mapping/pytorch_model.bin",
+        default="./outputs/augmentation/pytorch_model.bin",
     )
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument(

@@ -25,7 +25,7 @@ Usage
         --data-dir ./data/stage3b \\
         --images-dir /path/to/gqa/images \\
         --output-dir ./outputs/stage3b \\
-        --init-mapping-ckpt ../Stage2/outputs/wit/mapping/pytorch_model.bin \\
+        --init-mapping-ckpt ../Stage2/outputs/wit/pytorch_model.bin \\
         --mt-path facebook/nllb-200-3.3B \\
         --llm-path Qwen/Qwen3-VL-8B-Instruct
 """
@@ -469,7 +469,7 @@ def main(args, logger: logging.Logger) -> None:
 
         if val_loss < best_val:
             best_val = val_loss
-            ckpt_path = os.path.join(args.output_dir, "mapping", "pytorch_model.bin")
+            ckpt_path = os.path.join(args.output_dir, "pytorch_model.bin")
             save_checkpoint(ckpt_path, model, global_step, val_loss)
             logger.info("Saved best checkpoint (val_loss=%.4f) -> %s", val_loss, ckpt_path)
 
