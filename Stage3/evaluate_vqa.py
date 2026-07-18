@@ -40,6 +40,9 @@ NLLB_CODES: dict[str, str] = {
     "bn": "ben_Beng",
     "id": "ind_Latn",
     "jv": "jav_Latn",
+    "ru": "rus_Cyrl",
+    "de": "deu_Latn",
+    "zh": "zho_Hans",
 }
 
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
