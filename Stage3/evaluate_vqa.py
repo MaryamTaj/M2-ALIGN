@@ -61,7 +61,7 @@ _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
 
 def build_open_ended_prompt(question: str) -> str:
     """Must match train_vqa.py's `_build_user_prompt` exactly."""
-    return f"Question: {question}\nAnswer with a single word or short phrase."
+    return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
 def build_cvqa_open_ended_prompt(question: str) -> str:

@@ -65,7 +65,7 @@ def _build_user_prompt(question: str) -> str:
     and evaluation see identical LLM inputs (same convention as Stage 3a's
     `_build_user_prompt` / `evaluate_text.py`).
     """
-    return f"Question: {question}\nAnswer with a single word or short phrase."
+    return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
 def _build_chat_messages(question: str) -> list[dict]:
