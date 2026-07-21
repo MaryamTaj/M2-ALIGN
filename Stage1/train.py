@@ -499,6 +499,9 @@ if __name__ == "__main__":
         "Russian": "rus_Cyrl",
         "German": "deu_Latn",
         "Chinese": "zho_Hans",
+        "Amharic": "amh_Ethi",
+        "Igbo": "ibo_Latn",
+        "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
     }
     langs_map_m2m = {
         "English": "en", "Swahili": "sw", "Chinese": "zh", "Bengali": "bn",

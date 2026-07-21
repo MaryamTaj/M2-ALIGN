@@ -11,10 +11,14 @@ Qwen3-VL can already do zero-shot in these languages?
 
 Supported benchmarks (same real/non-synthetic sources as Stage3/evaluate_vqa.py)
 --------------------------------------------------------------------------------
-xgqa           -- open-ended, English short answers. **Active language: Bengali.**
+xgqa           -- open-ended, English short answers. Active languages: bn/de/ru/zh.
 worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
-                  deferred; neither covers Bengali, so nothing to run today)
-cvqa           -- multiple-choice, 4 options (Indonesian, Javanese -- deferred)
+                  deferred; no African-language coverage)
+cvqa           -- multiple-choice dataset, scored **open-ended via
+                  answer-choice log-likelihood** -- must match
+                  Stage3/evaluate_vqa.py's `evaluate_cvqa_open_ended`
+                  exactly so Baseline/Stage2/Stage3 are comparable. Active
+                  languages: am/ig/om.
 """
 from __future__ import annotations
 
@@ -36,7 +40,6 @@ from tqdm import tqdm
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
-_VQA_MC_SYSTEM = "You are a helpful assistant that answers multiple-choice questions about images."
 
 
 def build_open_ended_prompt(question: str) -> str:
@@ -44,15 +47,9 @@ def build_open_ended_prompt(question: str) -> str:
     return f"Question: {question}\nAnswer with a single word or short phrase."
 
 
-def build_mc_prompt(question: str, choices: list[str]) -> str:
-    """Must match Stage3/evaluate_vqa.py's `build_mc_prompt` exactly."""
-    letters = [chr(ord("A") + i) for i in range(len(choices))]
-    choice_lines = "\n".join(f"{l}. {c}" for l, c in zip(letters, choices))
-    return (
-        f"Question: {question}\n"
-        f"Choices:\n{choice_lines}\n\n"
-        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D)."
-    )
+def build_cvqa_open_ended_prompt(question: str) -> str:
+    """Must match Stage3/evaluate_vqa.py's `build_cvqa_open_ended_prompt` exactly."""
+    return f"Question: {question}"
 
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -154,6 +151,52 @@ def generate_answer(
     return processor.tokenizer.decode(gen_only[0], skip_special_tokens=True).strip()
 
 
+@torch.inference_mode()
+def score_choice_loglikelihood(
+    image: Image.Image,
+    prompt: str,
+    choice_text: str,
+    system_message: str,
+    model: Qwen3VLForConditionalGeneration,
+    processor: AutoProcessor,
+    device: torch.device,
+) -> float:
+    """Length-normalized log-likelihood of *choice_text* as a continuation of
+    *prompt*. Must match Stage3/evaluate_vqa.py's `score_choice_loglikelihood`
+    (same protocol, applied to the raw model instead of the custom mapping
+    pipeline): one forward pass per candidate choice, no generation."""
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": system_message}]},
+        {"role": "user", "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": prompt},
+        ]},
+    ]
+    inputs = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True,
+        return_dict=True, return_tensors="pt",
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    prompt_len = inputs["input_ids"].shape[1]
+
+    choice_ids = processor.tokenizer(choice_text, add_special_tokens=False, return_tensors="pt")["input_ids"].to(device)
+    n_choice_tok = choice_ids.shape[1]
+    if n_choice_tok == 0:
+        return float("-inf")
+
+    full_ids = torch.cat([inputs["input_ids"], choice_ids], dim=1)
+    full_mask = torch.cat([inputs["attention_mask"], torch.ones_like(choice_ids)], dim=1)
+    model_kwargs = {k: v for k, v in inputs.items() if k not in ("input_ids", "attention_mask")}
+    logits = model(input_ids=full_ids, attention_mask=full_mask, **model_kwargs).logits
+
+    # Position i's logits predict token i+1, so the logit that predicts
+    # choice token k sits at (prompt_len - 1 + k).
+    choice_logits = logits[0, prompt_len - 1 : prompt_len - 1 + n_choice_tok, :].float()
+    log_probs = torch.log_softmax(choice_logits, dim=-1)
+    token_logprobs = log_probs.gather(1, choice_ids[0].unsqueeze(-1)).squeeze(-1)
+    return (token_logprobs.sum() / n_choice_tok).item()
+
+
 # ─── Scoring (identical to Stage3/evaluate_vqa.py) ─────────────────────────
 
 def normalize_answer(text: str) -> str:
@@ -164,12 +207,6 @@ def normalize_answer(text: str) -> str:
 
 def open_ended_correct(pred_text: str, target: str) -> bool:
     return normalize_answer(pred_text) == normalize_answer(target)
-
-
-def classify_mc(text: str, n_choices: int) -> str:
-    valid = [chr(ord("A") + i) for i in range(n_choices)]
-    matches = [ch for ch in text if ch in valid]
-    return matches[0] if matches else valid[0]
 
 
 # ─── Evaluation loops ────────────────────────────────────────────────────────
@@ -196,28 +233,33 @@ def evaluate_open_ended(
     return acc
 
 
-def evaluate_mc(
+def evaluate_cvqa_open_ended(
     rows: list[dict], lang: str, image_resolver,
     model, processor, device, max_examples: int | None, logger: logging.Logger,
 ) -> float:
+    """CVQA's own open-ended protocol: no options shown in the prompt; score
+    each candidate answer choice by log-likelihood and take the argmax."""
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"mc/{lang}")):
+    for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
         image = image_resolver(row)
         if image is None:
             continue
         choices = row["choices"]
-        prompt = build_mc_prompt(row["query"], choices)
-        pred_text = generate_answer(image, prompt, _VQA_MC_SYSTEM, model, processor, device, max_new_tokens=8)
-        pred_letter = classify_mc(pred_text, len(choices))
-        target_letter = chr(ord("A") + int(row["answer_index"]))
-        ok = pred_letter == target_letter
+        prompt = build_cvqa_open_ended_prompt(row["query"])
+        scores = [
+            score_choice_loglikelihood(image, prompt, choice, _VQA_SYSTEM, model, processor, device)
+            for choice in choices
+        ]
+        pred_idx = max(range(len(scores)), key=lambda i: scores[i])
+        target_idx = int(row["answer_index"])
+        ok = pred_idx == target_idx
         correct += int(ok)
         if idx < 5:
             logger.info(
-                "idx=%d question=%r pred_text=%r pred=%s target=%s ok=%s",
-                idx, row["query"][:80], pred_text, pred_letter, target_letter, ok,
+                "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
+                idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
             )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
@@ -241,7 +283,8 @@ def main() -> None:
         description="Baseline Qwen3-VL evaluation on multilingual VQA benchmarks (no mapping layer)."
     )
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
-    parser.add_argument("--lang", required=True, help="ISO code (bn/id for xgqa; id/jv for worldcuisines/cvqa).")
+    parser.add_argument("--lang", required=True,
+                         help="ISO code (bn/de/ru/zh for xgqa; am/ig/om for cvqa; id/jv for worldcuisines/cvqa).")
     parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
@@ -270,7 +313,7 @@ def main() -> None:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
 
     if args.benchmark == "cvqa":
-        evaluate_mc(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+        evaluate_cvqa_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
     else:
         evaluate_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
 

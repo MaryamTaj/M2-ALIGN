@@ -6,17 +6,21 @@ translation system's output would measure translation-consistency, not
 VQA skill. Every row this script writes comes from a human-authored or
 professionally-translated source.
 
-Current active scope (see the Stage 3 language survey): **Bengali only**,
-via xGQA. Indonesian and Javanese are scoped out for now -- their loaders
-(worldcuisines, cvqa) are kept below, working and unchanged, purely as
-ready-to-use infrastructure if that scope is widened again later; they are
-not part of the active Bengali-only pipeline (neither WorldCuisines nor
-CVQA covers Bengali at all, so there is nothing to run for them today).
+Current active scope (see the Stage 3 language survey): xGQA for **bn/de/
+ru/zh**, CVQA for **am/ig/om** (scored open-ended-via-likelihood -- see
+evaluate_vqa.py -- not as visible-choice multiple-choice, per the CVQA
+paper's own open-ended protocol). Yoruba and WorldCuisines are dropped for
+now: WorldCuisines has no African-language coverage at all (sampled its
+full `lang` field and found only Asia/Europe/Middle-East tags), and xGQA
+has no Amharic/Igbo/Oromo coverage, so CVQA is the only VQA benchmark
+covering those three. Indonesian/Javanese are scoped out for the same
+reason as before -- their loader is kept below, working and unchanged, as
+ready-to-use infrastructure if that scope is widened again later.
 
 Sources
 -------
 xGQA (Pfeiffer et al. 2022) -- professionally-translated slice of GQA's own
-    test-dev set, 8 languages (we use Bengali). Not on the HF Hub as a
+    test-dev set, 8 languages (we use bn/de/ru/zh). Not on the HF Hub as a
     `load_dataset` id; distributed as per-language JSON files in the
     adapter-hub/xGQA GitHub repo
     (`data/zero_shot/testdev_balanced_questions_{lang}.json`), each a dict
@@ -30,18 +34,22 @@ WorldCuisines (Mohamed et al., NAACL 2025) -- `worldcuisines/vqa` on the
     Hub, configs `task1`/`task2`, splits `train`/`test_small`/`test_large`.
     Filtered client-side by the `lang` field (exact tag verified against a
     live sample at load time, logged for a sanity check -- see the Stage 3
-    verification plan's "data sanity" step). Covers Indonesian/Javanese,
-    not Bengali -- deferred, see above.
+    verification plan's "data sanity" step). Covers Indonesian/Javanese
+    only -- no Bengali, Amharic, Igbo, or Oromo coverage -- deferred, see
+    above.
 
 CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
     filtered by the `Subset` field (language-country pair string). Covers
-    Indonesian/Javanese, not Bengali -- deferred, see above.
+    Amharic ('Amharic','Ethiopia'), Igbo ('Igbo','Nigeria'), and Oromo
+    ('Oromo','Ethiopia'), plus Indonesian/Javanese (deferred, see above) --
+    no Bengali coverage.
 
 Usage
 -----
     # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
     # resolved relative to this script's own location, not the cwd:
-    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn
+    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn,de,ru,zh
+    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages am,ig,om
 
     # Deferred (Indonesian/Javanese) -- kept working for later, not run today:
     python Stage3/load_vqa_evaluation.py --benchmark worldcuisines --languages id,jv
@@ -71,6 +79,9 @@ WORLDCUISINES_LANG_CANDIDATES: dict[str, list[str]] = {
 CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
     "id": ["indonesian"],
     "jv": ["javanese"],
+    "am": ["amharic"],
+    "ig": ["igbo"],
+    "om": ["oromo"],
 }
 
 
@@ -232,7 +243,7 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
     """Load CVQA test rows filtered to one language.
 
     Args:
-        lang: One of the keys in :data:`CVQA_SUBSET_CANDIDATES` (``id``/``jv``).
+        lang: One of the keys in :data:`CVQA_SUBSET_CANDIDATES` (``am``/``ig``/``om``).
         logger: Logger instance.
 
     Returns:
@@ -242,6 +253,17 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
         WIT's ``image_url`` / xGQA's ``vg_image_id``) rather than the
         embedded HF ``Image`` feature, so this loader stays a plain JSONL
         writer with no PIL/image-encoding dependency.
+
+    Note:
+        In ``afaji/cvqa``, ``"Question"`` is the *original* native-language
+        question (posed by a native speaker) and ``"Translated Question"``
+        is its English translation -- the reverse of what the field names
+        suggest. ``query`` must stay in the native language to match every
+        other benchmark in this pipeline (xGQA, GQA training data, MGSM):
+        the untranslated question feeds both the NLLB encoder and the LLM
+        prompt `T`. ``choices`` intentionally keeps preferring the English
+        ``"Translated Options"``, matching the project-wide convention that
+        answers stay in English (see Stage3/load_vqa_data.py's docstring).
     """
     if lang not in CVQA_SUBSET_CANDIDATES:
         raise ValueError(f"No CVQA coverage configured for {lang!r}")
@@ -256,7 +278,7 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
 
     rows = []
     for r in ds_lang:
-        query = r.get("Translated Question") or r.get("Question")
+        query = r.get("Question") or r.get("Translated Question")
         choices = r.get("Translated Options") or r.get("Options")
         label = r.get("Label")
         image_url = r.get("Image Source")

@@ -34,10 +34,13 @@
 #   LANG=ru sbatch --job-name=stage3b_load_vqa_ru load_vqa_data_lang.sh
 #   LANG=de sbatch --job-name=stage3b_load_vqa_de load_vqa_data_lang.sh
 #   LANG=zh sbatch --job-name=stage3b_load_vqa_zh load_vqa_data_lang.sh
+#   LANG=am sbatch --job-name=stage3b_load_vqa_am load_vqa_data_lang.sh
+#   LANG=ig sbatch --job-name=stage3b_load_vqa_ig load_vqa_data_lang.sh
+#   LANG=om sbatch --job-name=stage3b_load_vqa_om load_vqa_data_lang.sh
 
 set -euo pipefail
 
-declare -A LANG_NAMES=( [ru]="Russian" [de]="German" [zh]="Chinese" )
+declare -A LANG_NAMES=( [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo" )
 LANG="${LANG:-ru}"
 LANG_NAME="${LANG_NAMES[$LANG]:-}"
 if [ -z "$LANG_NAME" ]; then

@@ -20,12 +20,15 @@
 #   LANG=ru sbatch --job-name=stage1_train_ru train_lang.sh
 #   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
+#   LANG=am sbatch --job-name=stage1_train_am train_lang.sh
+#   LANG=ig sbatch --job-name=stage1_train_ig train_lang.sh
+#   LANG=om sbatch --job-name=stage1_train_om train_lang.sh
 #
 # Saves to Stage1/outputs/$LANG/pytorch_model.bin
 
 set -euo pipefail
 
-declare -A LANG_NAMES=( [ru]="Russian" [de]="German" [zh]="Chinese" )
+declare -A LANG_NAMES=( [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo" )
 LANG="${LANG:-ru}"
 LANG_NAME="${LANG_NAMES[$LANG]:-}"
 if [ -z "$LANG_NAME" ]; then
@@ -107,7 +110,7 @@ echo
 cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 # --master_port varies by LANG so parallel submissions for different
 # languages don't collide on the same deepspeed rendezvous port.
-declare -A PORTS=( [ru]=50011 [de]=50012 [zh]=50013 )
+declare -A PORTS=( [ru]=50011 [de]=50012 [zh]=50013 [am]=50014 [ig]=50015 [om]=50016 )
 deepspeed --master_port "${PORTS[$LANG]}" train.py --deepspeed \
   --llm_path "$LLM_PATH" \
   --mt_path "$MT_PATH" \

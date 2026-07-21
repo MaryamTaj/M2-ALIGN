@@ -12,10 +12,18 @@ final Stage 3b checkpoint (the "after" result).
 
 Supported benchmarks
 --------------------
-xgqa           -- open-ended, English short answers. **Active language: Bengali.**
+xgqa           -- open-ended, English short answers. Active languages: bn/de/ru/zh.
 worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
-                  deferred; neither covers Bengali, so nothing to run today)
-cvqa           -- multiple-choice, 4 options (Indonesian, Javanese -- deferred)
+                  deferred; no African-language coverage, so nothing to run
+                  for am/ig/om)
+cvqa           -- multiple-choice dataset, but scored **open-ended via
+                  answer-choice log-likelihood** (the CVQA paper's own
+                  "open-ended" evaluation protocol: prompt with the question
+                  only, no visible options; pick whichever choice string the
+                  model assigns the highest average per-token
+                  log-probability to; compare that index against the gold
+                  label). Active languages: am/ig/om (Indonesian/Javanese
+                  also covered but deferred).
 """
 from __future__ import annotations
 
@@ -43,10 +51,12 @@ NLLB_CODES: dict[str, str] = {
     "ru": "rus_Cyrl",
     "de": "deu_Latn",
     "zh": "zho_Hans",
+    "am": "amh_Ethi",
+    "ig": "ibo_Latn",
+    "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
 }
 
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
-_VQA_MC_SYSTEM = "You are a helpful assistant that answers multiple-choice questions about images."
 
 
 def build_open_ended_prompt(question: str) -> str:
@@ -54,14 +64,11 @@ def build_open_ended_prompt(question: str) -> str:
     return f"Question: {question}\nAnswer with a single word or short phrase."
 
 
-def build_mc_prompt(question: str, choices: list[str]) -> str:
-    letters = [chr(ord("A") + i) for i in range(len(choices))]
-    choice_lines = "\n".join(f"{l}. {c}" for l, c in zip(letters, choices))
-    return (
-        f"Question: {question}\n"
-        f"Choices:\n{choice_lines}\n\n"
-        "Answer with the letter corresponding to the correct choice (e.g., A, B, C, D)."
-    )
+def build_cvqa_open_ended_prompt(question: str) -> str:
+    """CVQA's own "open-ended" protocol: the question only, no options shown
+    and no "single word" instruction (CVQA answers are full phrases, e.g.
+    city names, not necessarily one word)."""
+    return f"Question: {question}"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +217,76 @@ def generate_answer(
     return (out_texts[0] if out_texts else "").strip()
 
 
+@torch.inference_mode()
+def score_choice_loglikelihood(
+    image: Image.Image,
+    question: str,
+    choice_text: str,
+    nllb_code: str,
+    model: AugmentedVisualMindMerger,
+    processor: AutoProcessor,
+    tokenizer_mt: NllbTokenizer,
+    tokenizer_llm: AutoTokenizer,
+    device: torch.device,
+    amp_dtype: torch.dtype,
+    visual_pixels: int,
+    max_mt_seq_len: int,
+    max_llm_seq_len: int,
+) -> float:
+    """Length-normalized log-likelihood of *choice_text* as a continuation of
+    the CVQA open-ended prompt (question only, no options shown).
+
+    Reuses `AugmentedVisualMindMerger._build_prefix_raw` -- the same prefix
+    construction `forward`/`generate` use -- so the choice-scoring inputs are
+    identical to what training/generation would have seen up to this point;
+    only the continuation differs (a candidate answer instead of a
+    generated/label sequence). One forward pass per candidate choice (CVQA
+    has ~4), not a single batched pass across choices, since choices differ
+    in token length and batching them would need padding-aware log-prob
+    gathering for a marginal speed gain over ~4 sequential passes/question.
+    """
+    image_inputs = processor(
+        images=[image], text=[""], return_tensors="pt", min_pixels=visual_pixels, max_pixels=visual_pixels,
+    )
+    pixel_values = image_inputs["pixel_values"].to(device)
+    image_grid_thw = image_inputs["image_grid_thw"].to(device)
+
+    tokenizer_mt.src_lang = nllb_code
+    enc_mt = tokenizer_mt(question, truncation=True, max_length=max_mt_seq_len, return_tensors="pt")
+    input_ids_mt = enc_mt["input_ids"].to(device)
+    mask_mt = enc_mt["attention_mask"].to(device)
+
+    prompt = build_cvqa_open_ended_prompt(question)
+    messages = [{"role": "system", "content": _VQA_SYSTEM}, {"role": "user", "content": prompt}]
+    formatted = tokenizer_llm.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    enc_llm = tokenizer_llm(formatted, truncation=True, max_length=max_llm_seq_len, return_tensors="pt")
+    input_ids_query_llm = enc_llm["input_ids"].to(device)
+    mask_query_llm = enc_llm["attention_mask"].to(device)
+
+    choice_ids = tokenizer_llm(choice_text, add_special_tokens=False, return_tensors="pt")["input_ids"].to(device)
+    n_choice_tok = choice_ids.shape[1]
+    if n_choice_tok == 0:
+        return float("-inf")
+
+    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+        prefix_embeds, prefix_mask = model._build_prefix_raw(
+            pixel_values, image_grid_thw, input_ids_mt, mask_mt,
+            input_ids_query_llm, mask_query_llm,
+        )
+        choice_embeds = model.llm_embedding_layer(choice_ids).to(model.llm_dtype)
+        full_embeds = torch.cat([prefix_embeds, choice_embeds], dim=1)
+        full_mask = torch.cat([prefix_mask, torch.ones_like(choice_ids)], dim=1)
+        logits = model.model_llm(inputs_embeds=full_embeds, attention_mask=full_mask).logits
+
+    # Position i's logits predict token i+1, so the logit that predicts
+    # choice token k sits at (prefix_len - 1 + k).
+    prefix_len = prefix_embeds.shape[1]
+    choice_logits = logits[0, prefix_len - 1 : prefix_len - 1 + n_choice_tok, :].float()
+    log_probs = torch.log_softmax(choice_logits, dim=-1)
+    token_logprobs = log_probs.gather(1, choice_ids[0].unsqueeze(-1)).squeeze(-1)
+    return (token_logprobs.sum() / n_choice_tok).item()
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -222,12 +299,6 @@ def normalize_answer(text: str) -> str:
 
 def open_ended_correct(pred_text: str, target: str) -> bool:
     return normalize_answer(pred_text) == normalize_answer(target)
-
-
-def classify_mc(text: str, n_choices: int) -> str:
-    valid = [chr(ord("A") + i) for i in range(n_choices)]
-    matches = [ch for ch in text if ch in valid]
-    return matches[0] if matches else valid[0]
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +337,7 @@ def evaluate_open_ended(
     return acc
 
 
-def evaluate_mc(
+def evaluate_cvqa_open_ended(
     rows: list[dict],
     lang: str,
     image_resolver,
@@ -274,30 +345,33 @@ def evaluate_mc(
     max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
     logger: logging.Logger,
 ) -> float:
+    """CVQA's own open-ended protocol: no options shown in the prompt; score
+    each candidate answer choice by log-likelihood and take the argmax."""
     nllb_code = NLLB_CODES[lang]
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"mc/{lang}")):
+    for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
         image = image_resolver(row)
         if image is None:
             continue
         choices = row["choices"]
-        prompt = build_mc_prompt(row["query"], choices)
-        pred_text = generate_answer(
-            image, row["query"], prompt, _VQA_MC_SYSTEM, nllb_code,
-            model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
-            max_new_tokens=8, visual_pixels=visual_pixels,
-            max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
-        )
-        pred_letter = classify_mc(pred_text, len(choices))
-        target_letter = chr(ord("A") + int(row["answer_index"]))
-        ok = pred_letter == target_letter
+        scores = [
+            score_choice_loglikelihood(
+                image, row["query"], choice, nllb_code,
+                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                visual_pixels=visual_pixels, max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+            )
+            for choice in choices
+        ]
+        pred_idx = max(range(len(scores)), key=lambda i: scores[i])
+        target_idx = int(row["answer_index"])
+        ok = pred_idx == target_idx
         correct += int(ok)
         if idx < 5:
             logger.info(
-                "idx=%d question=%r pred_text=%r pred=%s target=%s ok=%s",
-                idx, row["query"][:80], pred_text, pred_letter, target_letter, ok,
+                "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
+                idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
             )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
@@ -321,7 +395,8 @@ def _read_jsonl(path: str) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
-    parser.add_argument("--lang", required=True, help="ISO code (bn/id for xgqa; id/jv for worldcuisines/cvqa).")
+    parser.add_argument("--lang", required=True,
+                         help="ISO code (bn/de/ru/zh for xgqa; am/ig/om for cvqa; id/jv for worldcuisines/cvqa).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
@@ -367,7 +442,7 @@ def main() -> None:
     )
 
     if args.benchmark == "cvqa":
-        evaluate_mc(rows, args.lang, **common_kw)
+        evaluate_cvqa_open_ended(rows, args.lang, **common_kw)
     else:
         evaluate_open_ended(rows, args.lang, **common_kw)
 

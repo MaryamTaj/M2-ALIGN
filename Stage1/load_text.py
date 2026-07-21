@@ -32,6 +32,12 @@ LANG_TO_NLLB = {
     "Russian": "rus_Cyrl",
     "German": "deu_Latn",
     "Chinese": "zho_Hans",
+    # Low-resource VQA-track languages (CVQA + AfriMGSM eval; Yoruba dropped
+    # for now -- WorldCuisines has no Yoruba coverage and xGQA has no Oromo/
+    # Igbo/Amharic coverage, so all three ship with CVQA/AfriMGSM instead).
+    "Amharic": "amh_Ethi",
+    "Igbo": "ibo_Latn",
+    "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
 }
 
 

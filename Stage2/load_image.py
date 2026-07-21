@@ -87,6 +87,14 @@ WIT_TO_NLLB: dict[str, str] = {
     # Indonesian/Javanese were scoped out for now -- add back the same way
     # if/when the VQA track is widened again.
     "bn": "ben_Beng",
+    # Low-resource VQA-track languages (CVQA + AfriMGSM eval). Wikipedia is
+    # much smaller for these three than for bn/ru/de/zh -- run
+    # `--stats-only --languages am,ig,om` before committing to a full
+    # download; WIT coverage may cap the achievable n-per-language well
+    # below the 745 used for ru/de/zh.
+    "am": "amh_Ethi",
+    "ig": "ibo_Latn",
+    "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
 }
 
 WIT_CODE_TO_NAME: dict[str, str] = {
@@ -99,6 +107,9 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "tr": "Turkish",   "uk": "Ukrainian", "vi": "Vietnamese",
     "zh": "Chinese",
     "bn": "Bengali",
+    "am": "Amharic",
+    "ig": "Igbo",
+    "om": "Oromo",
 }
 
 # Unicode block ranges keyed by the script suffix of the NLLB tag (e.g.
@@ -115,6 +126,7 @@ SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
     "Hang": [(0xAC00, 0xD7A3)],
     "Jpan": [(0x3040, 0x30FF), (0x4E00, 0x9FFF)],
     "Hans": [(0x4E00, 0x9FFF)],
+    "Ethi": [(0x1200, 0x137F), (0x1380, 0x139F), (0x2D80, 0x2DDF)],
 }
 
 

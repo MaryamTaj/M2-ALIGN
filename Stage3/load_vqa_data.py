@@ -53,6 +53,9 @@ LANG_TO_NLLB: dict[str, str] = {
     "Russian": "rus_Cyrl",
     "German": "deu_Latn",
     "Chinese": "zho_Hans",
+    "Amharic": "amh_Ethi",
+    "Igbo": "ibo_Latn",
+    "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
 }
 
 DEFAULT_N_SAMPLES = 30_000
