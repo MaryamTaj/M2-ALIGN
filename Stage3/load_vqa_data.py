@@ -44,10 +44,7 @@ from datasets import load_dataset
 from load_text_data import load_nllb, stable_id, write_jsonl
 
 # Stage 3b VQA-track language (must already be backfilled into Stage 1's
-# NLLB corpus and Stage 2's WIT config -- see the Stage 3 plan). Indonesian
-# and Javanese were scoped out for now (xGQA doesn't cover Javanese at
-# all, and neither has a training-scale native source the way GQA does for
-# Bengali) -- add them back here the same way if the VQA track is widened.
+# NLLB corpus and Stage 2's WIT config -- see the Stage 3 plan).
 LANG_TO_NLLB: dict[str, str] = {
     "Bengali": "ben_Beng",
     "Russian": "rus_Cyrl",
@@ -56,6 +53,13 @@ LANG_TO_NLLB: dict[str, str] = {
     "Amharic": "amh_Ethi",
     "Igbo": "ibo_Latn",
     "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
+    "Portuguese": "por_Latn",
+    "Indonesian": "ind_Latn",
+    "Korean": "kor_Hang",
+    "Javanese": "jav_Latn",
+    "Mongolian": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
+    "Sinhalese": "sin_Sinh",
+    "Irish": "gle_Latn",
 }
 
 DEFAULT_N_SAMPLES = 30_000

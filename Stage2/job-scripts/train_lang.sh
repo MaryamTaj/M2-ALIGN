@@ -14,8 +14,9 @@
 # Per-language Stage 2 training -- warm-starts from that language's own
 # Stage 1 checkpoint (Stage1/outputs/$LANG) and saves its own
 # checkpoint, independent of the other languages and of Bengali's
-# Stage2/outputs/wit. Image cache dir is shared across all languages
-# (keyed by URL hash -- no collision, avoids redundant downloads).
+# Stage2/outputs/wit. Each language has its own image cache dir
+# (Stage2/data/$LANG/image_cache), matching load_image.py's per-language
+# output layout.
 #
 # Usage:
 #   LANG=ru sbatch --job-name=stage2_train_ru train_lang.sh
@@ -130,7 +131,7 @@ cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
   --data-path  "$DATA_PATH" \
   --output-dir "$OUTPUT_DIR" \
-  --image-cache-dir "$STAGE2/data/image_cache" \
+  --image-cache-dir "$STAGE2/data/$LANG/image_cache" \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --mt-path    "$MT_PATH" \
   --llm-path   "$LLM_PATH" \

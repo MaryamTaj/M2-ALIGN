@@ -6,22 +6,33 @@ translation system's output would measure translation-consistency, not
 VQA skill. Every row this script writes comes from a human-authored or
 professionally-translated source.
 
-Current active scope (see the Stage 3 language survey): xGQA for **bn/de/
-ru/zh**, CVQA for **am/ig/om** (scored open-ended-via-likelihood -- see
-evaluate_vqa.py -- not as visible-choice multiple-choice, per the CVQA
-paper's own open-ended protocol). Yoruba and WorldCuisines are dropped for
-now: WorldCuisines has no African-language coverage at all (sampled its
-full `lang` field and found only Asia/Europe/Middle-East tags), and xGQA
-has no Amharic/Igbo/Oromo coverage, so CVQA is the only VQA benchmark
-covering those three. Indonesian/Javanese are scoped out for the same
-reason as before -- their loader is kept below, working and unchanged, as
-ready-to-use infrastructure if that scope is widened again later.
+Current active scope (see the Stage 3 language survey), one row per
+language across every VQA benchmark this project's Stage 1/2 covers it
+for -- policy is to run every benchmark a language qualifies for, not just
+one, since xGQA/CVQA/WorldCuisines are independent evaluations, not
+interchangeable:
+
+    bn         xGQA + CVQA
+    de         xGQA only (no CVQA subset for German at all)
+    ru, zh     xGQA + CVQA
+    pt, id, ko xGQA + CVQA
+    jv         CVQA (+ WorldCuisines, deferred) -- no xGQA coverage
+    mn, si, ga CVQA only -- no xGQA or WorldCuisines coverage
+    am, ig, om CVQA only -- no xGQA/WorldCuisines African-language coverage
+
+CVQA is scored open-ended-via-likelihood -- see evaluate_vqa.py -- not as
+visible-choice multiple-choice, per the CVQA paper's own open-ended
+protocol. Yoruba is dropped: no xGQA/CVQA/WorldCuisines coverage at all.
+WorldCuisines is otherwise deferred even where it has coverage (id/jv) --
+its loader is kept below, working and unchanged, as ready-to-use
+infrastructure if that scope is widened.
 
 Sources
 -------
 xGQA (Pfeiffer et al. 2022) -- professionally-translated slice of GQA's own
-    test-dev set, 8 languages (we use bn/de/ru/zh). Not on the HF Hub as a
-    `load_dataset` id; distributed as per-language JSON files in the
+    test-dev set, 8 languages total (bn/de/en/id/ko/pt/ru/zh); we use all 8
+    that this project has a checkpoint for: bn/de/ru/zh/pt/id/ko. Not on the
+    HF Hub as a `load_dataset` id; distributed as per-language JSON files in the
     adapter-hub/xGQA GitHub repo
     (`data/zero_shot/testdev_balanced_questions_{lang}.json`), each a dict
     keyed by question id with fields `question` (translated), `imageId`
@@ -40,20 +51,32 @@ WorldCuisines (Mohamed et al., NAACL 2025) -- `worldcuisines/vqa` on the
 
 CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
     filtered by the `Subset` field (language-country pair string). Covers
-    Amharic ('Amharic','Ethiopia'), Igbo ('Igbo','Nigeria'), and Oromo
-    ('Oromo','Ethiopia'), plus Indonesian/Javanese (deferred, see above) --
-    no Bengali coverage.
+    Amharic ('Amharic','Ethiopia'), Igbo ('Igbo','Nigeria'), Oromo
+    ('Oromo','Ethiopia'), Indonesian, and Javanese, plus -- for the newer
+    Stage 1/2 language set that has no MGSM/MSVAMP coverage and no active
+    xGQA slot -- Portuguese ('Portuguese','Brazil'), Korean ('Korean','South
+    Korea'), Mongolian ('Mongolian','Mongolia'), Sinhala ('Sinhala',
+    'Sri_Lanka'), and Irish ('Irish','Ireland'). No Bengali or German
+    coverage (German has no CVQA subset at all).
 
 Usage
 -----
     # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
     # resolved relative to this script's own location, not the cwd:
-    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn,de,ru,zh
+    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko
     python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages am,ig,om
 
-    # Deferred (Indonesian/Javanese) -- kept working for later, not run today:
+    # bn/ru/zh/pt/id/ko all have BOTH xGQA and CVQA coverage -- run both,
+    # they're independent evaluations, not redundant (zh here is
+    # mainland/China only, not the separate Singapore subset CVQA also has):
+    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko
+
+    # jv/mn/si/ga: CVQA only -- no xGQA coverage for any of these four.
+    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages jv,mn,si,ga
+
+    # Deferred (Indonesian/Javanese via worldcuisines) -- kept working for
+    # later, not run today; CVQA coverage for id/jv is active above:
     python Stage3/load_vqa_evaluation.py --benchmark worldcuisines --languages id,jv
-    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages id,jv
 """
 from __future__ import annotations
 
@@ -67,7 +90,13 @@ import requests
 from datasets import load_dataset
 
 XGQA_RAW_BASE = "https://raw.githubusercontent.com/adapter-hub/xGQA/master/data/zero_shot"
-XGQA_LANGS = {"bn", "de", "en", "ru", "zh"}  # xGQA also has "id"/"ko"/"pt" (deferred for now) among its 8 languages
+# All 8 of xGQA's languages that this project has a Stage 1/2 checkpoint
+# for. Policy: wherever a language has both xGQA and CVQA coverage, run
+# both -- they're independent benchmarks (professionally-translated
+# multiple-choice-as-open-ended vs. crowd-sourced open-ended-via-
+# likelihood), not redundant. jv/mn/si/ga have no xGQA coverage at all
+# (outside its 8 languages), so CVQA is their only VQA-eval path.
+XGQA_LANGS = {"bn", "de", "en", "ru", "zh", "pt", "id", "ko"}
 
 # Candidate substrings to match against WorldCuisines' `lang` field and
 # CVQA's `Subset` field. Verify the actual match against the logged
@@ -82,6 +111,30 @@ CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
     "am": ["amharic"],
     "ig": ["igbo"],
     "om": ["oromo"],
+    # Added to cover Stage 1/2's newer language set (none of these five have
+    # MGSM/MSVAMP coverage). pt/ko are also active in xGQA -- run both, per
+    # policy above; mn/si/ga have no xGQA coverage, so CVQA is their only
+    # VQA-eval path. Subset values are literally "('<Language>', '<Country>')"
+    # strings (verified against afaji/cvqa's actual Subset column) -- each of
+    # these five names only one country, so a single substring is unambiguous.
+    # German has no CVQA subset at all (verified: not among its 39 subsets),
+    # so it stays uncovered by this benchmark.
+    "pt": ["portuguese"],
+    "ko": ["korean"],
+    "mn": ["mongolian"],
+    "si": ["sinhala"],
+    "ga": ["irish"],
+    # Also covered by xGQA -- per policy above, run both benchmarks rather
+    # than picking one. "zh" deliberately matches "china" (not
+    # "chinese"/"zh"): CVQA ships two Chinese subsets,
+    # ('Chinese','China') and ('Chinese','Singapore'); xGQA's zh is
+    # mainland/simplified Chinese, so only the China subset is the fair
+    # comparison -- Singapore stays excluded. No "de" entry: German has no
+    # CVQA subset at all (verified against all 39 subsets), so
+    # `--languages de` correctly raises rather than silently matching 0 rows.
+    "bn": ["bengali"],
+    "ru": ["russian"],
+    "zh": ["china"],
 }
 
 

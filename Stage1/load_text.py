@@ -24,10 +24,7 @@ LANG_TO_NLLB = {
     "Yoruba": "yor_Latn",
     "Wolof": "wol_Latn",
     "French": "fra_Latn",
-    # Stage 3 VQA-track language (see Stage3 plan): needs its own NLLB
-    # mapping/translation checkpoint before Stage 2/3 can use it.
-    # Indonesian/Javanese were scoped out for now -- add back the same way
-    # if/when the VQA track is widened again.
+    # Stage 3 VQA-track language (see Stage3 plan).
     "Bengali": "ben_Beng",
     "Russian": "rus_Cyrl",
     "German": "deu_Latn",
@@ -38,6 +35,16 @@ LANG_TO_NLLB = {
     "Amharic": "amh_Ethi",
     "Igbo": "ibo_Latn",
     "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
+    # Rounding out the 11-language set (see Stage2/load_image.py's
+    # WIT_TO_NLLB, which already covers these): CVQA is these languages'
+    # VQA-eval path (no MGSM/MSVAMP/xGQA coverage for any of the seven).
+    "Portuguese": "por_Latn",
+    "Indonesian": "ind_Latn",
+    "Korean": "kor_Hang",
+    "Javanese": "jav_Latn",
+    "Mongolian": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
+    "Sinhalese": "sin_Sinh",
+    "Irish": "gle_Latn",
 }
 
 

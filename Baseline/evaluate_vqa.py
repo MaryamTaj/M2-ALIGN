@@ -11,14 +11,20 @@ Qwen3-VL can already do zero-shot in these languages?
 
 Supported benchmarks (same real/non-synthetic sources as Stage3/evaluate_vqa.py)
 --------------------------------------------------------------------------------
-xgqa           -- open-ended, English short answers. Active languages: bn/de/ru/zh.
+Policy: wherever a language has coverage in more than one benchmark below,
+run all of them -- they're independent evaluations, not interchangeable.
+
+xgqa           -- open-ended, English short answers. Active languages:
+                  bn/de/ru/zh/pt/id/ko.
 worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
                   deferred; no African-language coverage)
 cvqa           -- multiple-choice dataset, scored **open-ended via
                   answer-choice log-likelihood** -- must match
                   Stage3/evaluate_vqa.py's `evaluate_cvqa_open_ended`
                   exactly so Baseline/Stage2/Stage3 are comparable. Active
-                  languages: am/ig/om.
+                  languages: am/ig/om/mn/si/ga, plus bn/ru/zh/pt/id/ko
+                  (also run through xGQA, per the policy note). No German
+                  coverage -- CVQA has no German subset at all.
 """
 from __future__ import annotations
 
@@ -284,7 +290,7 @@ def main() -> None:
     )
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh for xgqa; am/ig/om for cvqa; id/jv for worldcuisines/cvqa).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
     parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",

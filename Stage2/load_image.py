@@ -15,15 +15,20 @@ target-language entry and, if both exist, emit a pair:
 shared per image (not per language) in wikimedia/wit_base and is often
 left in English regardless of which language's ref_desc is used.
 
+Each requested language gets its own output subdirectory --
+``<output-dir>/<lang>/wit_pairs.jsonl`` -- with its own image cache at
+``<output-dir>/<lang>/image_cache`` by default, so per-language data can be
+moved (e.g. via Globus to a cluster) independently of any other language.
+
 Output JSONL fields per row:
     id, image_url, caption_text, target_caption,
     source_language, language_code, nllb_lang_tag
 
-Images themselves are downloaded here too (into ``<output-dir>/image_cache``
-by default), not by the training script — this keeps train.py free of any
-network dependency, which matters on clusters (e.g. Narval) whose compute
-nodes have no internet access. Pairs whose image fails to download are
-dropped from the JSONL. Pass ``--skip-download`` to only write the JSONL.
+Images themselves are downloaded here too, not by the training script — this
+keeps train.py free of any network dependency, which matters on clusters
+(e.g. Narval) whose compute nodes have no internet access. Pairs whose image
+fails to download are dropped from the JSONL. Pass ``--skip-download`` to
+only write the JSONL.
 
 Usage
 -----
@@ -84,8 +89,6 @@ WIT_TO_NLLB: dict[str, str] = {
     "zh": "zho_Hans",
     # Stage 3 VQA-track language (see Stage3 plan). Run
     # `--stats-only --languages bn` before committing to a full download.
-    # Indonesian/Javanese were scoped out for now -- add back the same way
-    # if/when the VQA track is widened again.
     "bn": "ben_Beng",
     # Low-resource VQA-track languages (CVQA + AfriMGSM eval). Wikipedia is
     # much smaller for these three than for bn/ru/de/zh -- run
@@ -95,6 +98,11 @@ WIT_TO_NLLB: dict[str, str] = {
     "am": "amh_Ethi",
     "ig": "ibo_Latn",
     "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
+    "id": "ind_Latn",
+    "jv": "jav_Latn",
+    "mn": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
+    "si": "sin_Sinh",
+    "ga": "gle_Latn",
 }
 
 WIT_CODE_TO_NAME: dict[str, str] = {
@@ -110,13 +118,19 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "am": "Amharic",
     "ig": "Igbo",
     "om": "Oromo",
+    "id": "Indonesian",
+    "jv": "Javanese",
+    "mn": "Mongolian",
+    "si": "Sinhalese",
+    "ga": "Irish",
 }
 
 # Unicode block ranges keyed by the script suffix of the NLLB tag (e.g.
 # "ben_Beng" -> "Beng"). Only scripts visually distinguishable from Latin
 # are listed: for *_Latn languages (de, es, fr, hr, hu, it, nl, pl, pt, ro,
-# sw, tr, vi) script alone can't tell target-language text apart from
-# English attribution text, so those are left unchecked.
+# sw, tr, vi, id, jv, ga) script alone can't tell target-language text apart
+# from English attribution text, so those are left unchecked. Mongolian
+# ("mn") reuses "Cyrl" since NLLB's khk_Cyrl is written in Cyrillic script.
 SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
     "Arab": [(0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF)],
     "Cyrl": [(0x0400, 0x04FF)],
@@ -127,6 +141,7 @@ SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
     "Jpan": [(0x3040, 0x30FF), (0x4E00, 0x9FFF)],
     "Hans": [(0x4E00, 0x9FFF)],
     "Ethi": [(0x1200, 0x137F), (0x1380, 0x139F), (0x2D80, 0x2DDF)],
+    "Sinh": [(0x0D80, 0x0DFF)],
 }
 
 
@@ -453,10 +468,11 @@ def build_language_pairs(
 
     Args:
         lang_codes: ISO 639-1 codes to collect (must be keys of :data:`WIT_TO_NLLB`).
-        n_per_language: Target number of output pairs per language. A
-            value <= 0 means "no cap" — collect every image that has both
-            a target-language and an English caption, streaming the whole
-            dataset, and skip the down-sampling step.
+        n_per_language: Target number of output pairs per language. Collection
+            for a language stops as soon as it hits this count -- no over-
+            collection, no down-sampling. A value <= 0 means "no cap" —
+            collect every image that has both a target-language and an
+            English caption, streaming the whole dataset.
         seed: Random seed for sampling.
         logger: Logger instance.
         output_dir: Directory to write the checkpoint file into.
@@ -482,10 +498,10 @@ def build_language_pairs(
         resume_state = None
 
     unlimited = n_per_language <= 0
-    overcollect = None if unlimited else n_per_language * 3
+    target = None if unlimited else n_per_language
     done: set[str] = {
         code for code in lang_codes
-        if overcollect is not None and len(collected[code]) >= overcollect
+        if target is not None and len(collected[code]) >= target
     }
 
     for row, ds_state in _stream_rows(lambda: _load_wit_base(logger), resume_state, logger):
@@ -532,25 +548,25 @@ def build_language_pairs(
                 "language_code": code,
                 "nllb_lang_tag": WIT_TO_NLLB[code],
             })
-            # Over-collect then sample to get a random subset, not just the first N.
-            if overcollect is not None and len(collected[code]) >= overcollect:
+            if target is not None and len(collected[code]) >= target:
                 done.add(code)
 
     if os.path.exists(ckpt_path):
         os.remove(ckpt_path)
         logger.info("Scan complete -- checkpoint removed.")
 
-    sampled: dict[str, list[dict]] = {}
+    # Collection above stops each language exactly at n_per_language (or
+    # whenever the stream runs out), so there's nothing left to down-sample:
+    # every pair collected is used, and scanning never fetches more than
+    # required. random.Random(seed).shuffle just avoids the collected order
+    # (which follows stream order, not randomness) leaking into training.
     for code in lang_codes:
-        pairs = collected[code]
+        random.Random(seed).shuffle(collected[code])
         if unlimited:
-            sampled[code] = pairs
-            logger.info("  %s: %d pairs found (unlimited, no sampling)", WIT_CODE_TO_NAME[code], len(pairs))
-            continue
-        n = min(n_per_language, len(pairs))
-        sampled[code] = random.Random(seed).sample(pairs, n)
-        logger.info("  %s: %d pairs found → sampled %d", WIT_CODE_TO_NAME[code], len(pairs), n)
-    return sampled
+            logger.info("  %s: %d pairs found (unlimited)", WIT_CODE_TO_NAME[code], len(collected[code]))
+        else:
+            logger.info("  %s: %d/%d pairs collected", WIT_CODE_TO_NAME[code], len(collected[code]), n_per_language)
+    return collected
 
 
 def analyze_attribution_script(
@@ -702,14 +718,21 @@ def main() -> None:
     parser.add_argument(
         "--n-per-language", type=int, default=50_000,
         help=(
-            "Target number of image-caption pairs per language. Pass 0 (or "
-            "negative) to collect every image with both a target-language "
-            "and an English caption, with no cap and no down-sampling."
+            "Target number of image-caption pairs per language. Collection "
+            "for each language stops as soon as it reaches this count -- no "
+            "over-collection, no down-sampling. Pass 0 (or negative) to "
+            "collect every image with both a target-language and an "
+            "English caption, with no cap."
         ),
     )
     parser.add_argument(
         "--output-dir", type=str,
         default=os.path.join(os.path.dirname(__file__), "data"),
+        help=(
+            "Each language gets its own subdirectory here: "
+            "<output-dir>/<lang>/wit_pairs.jsonl and "
+            "<output-dir>/<lang>/image_cache/ (unless --image-cache-dir overrides it)."
+        ),
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
@@ -733,8 +756,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--image-cache-dir", type=str, default=None,
-        help="Directory to download images into (default: <output-dir>/image_cache, "
-             "matching train.py's --image-cache-dir default of ./data/image_cache).",
+        help="Directory to download images into. Default: a separate "
+             "<output-dir>/<lang>/image_cache per language. Only set this "
+             "explicitly for a single-language run if you want the cache "
+             "somewhere else -- it is used as-is (not per-language) when set.",
     )
     parser.add_argument(
         "--download-workers", type=int, default=4,
@@ -766,27 +791,29 @@ def main() -> None:
         analyze_attribution_script(lang_codes, args.max_rows, logger)
         return
 
+    # One stream pass over WIT collects every requested language at once
+    # (see build_language_pairs); only the output below is per-language.
     pairs_by_lang = build_language_pairs(
         lang_codes, args.n_per_language, args.seed, logger, args.output_dir,
     )
 
-    all_rows: list[dict] = [row for rows in pairs_by_lang.values() for row in rows]
-    random.Random(args.seed).shuffle(all_rows)
+    for code in lang_codes:
+        rows = pairs_by_lang[code]
+        lang_dir = os.path.join(args.output_dir, code)
 
-    if not args.skip_download:
-        cache_dir = args.image_cache_dir or os.path.join(args.output_dir, "image_cache")
-        ok_urls = download_images(all_rows, cache_dir, args.download_workers, logger)
-        before = len(all_rows)
-        all_rows = [row for row in all_rows if row["image_url"] in ok_urls]
-        logger.info("Kept %d/%d pairs with a successfully cached image", len(all_rows), before)
+        if not args.skip_download:
+            cache_dir = args.image_cache_dir or os.path.join(lang_dir, "image_cache")
+            ok_urls = download_images(rows, cache_dir, args.download_workers, logger)
+            before = len(rows)
+            rows = [row for row in rows if row["image_url"] in ok_urls]
+            logger.info(
+                "%s: kept %d/%d pairs with a successfully cached image",
+                WIT_CODE_TO_NAME[code], len(rows), before,
+            )
 
-    out_path = os.path.join(args.output_dir, "wit_pairs.jsonl")
-    _write_jsonl(out_path, all_rows, logger)
-
-    by_lang: dict[str, int] = {}
-    for row in all_rows:
-        by_lang[row["language_code"]] = by_lang.get(row["language_code"], 0) + 1
-    logger.info("Total pairs: %d | per-language: %s", len(all_rows), by_lang)
+        out_path = os.path.join(lang_dir, "wit_pairs.jsonl")
+        _write_jsonl(out_path, rows, logger)
+        logger.info("%s: %d pairs -> %s", WIT_CODE_TO_NAME[code], len(rows), out_path)
 
 
 if __name__ == "__main__":

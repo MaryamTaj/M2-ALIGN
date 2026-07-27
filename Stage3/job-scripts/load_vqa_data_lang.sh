@@ -37,10 +37,21 @@
 #   LANG=am sbatch --job-name=stage3b_load_vqa_am load_vqa_data_lang.sh
 #   LANG=ig sbatch --job-name=stage3b_load_vqa_ig load_vqa_data_lang.sh
 #   LANG=om sbatch --job-name=stage3b_load_vqa_om load_vqa_data_lang.sh
+#   LANG=pt sbatch --job-name=stage3b_load_vqa_pt load_vqa_data_lang.sh
+#   LANG=id sbatch --job-name=stage3b_load_vqa_id load_vqa_data_lang.sh
+#   LANG=ko sbatch --job-name=stage3b_load_vqa_ko load_vqa_data_lang.sh
+#   LANG=jv sbatch --job-name=stage3b_load_vqa_jv load_vqa_data_lang.sh
+#   LANG=mn sbatch --job-name=stage3b_load_vqa_mn load_vqa_data_lang.sh
+#   LANG=si sbatch --job-name=stage3b_load_vqa_si load_vqa_data_lang.sh
+#   LANG=ga sbatch --job-name=stage3b_load_vqa_ga load_vqa_data_lang.sh
 
 set -euo pipefail
 
-declare -A LANG_NAMES=( [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo" )
+declare -A LANG_NAMES=(
+  [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo"
+  [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
+  [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
+)
 LANG="${LANG:-ru}"
 LANG_NAME="${LANG_NAMES[$LANG]:-}"
 if [ -z "$LANG_NAME" ]; then
