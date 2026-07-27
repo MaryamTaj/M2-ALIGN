@@ -14,7 +14,7 @@ python Stage1/load_text.py --languages Bengali \
 sbatch Stage1/job-scripts/train.sh
 
 # Load Stage 2 data:
-python Stage2/load_image.py --languages bn --n-per-language 745 --output-dir Stage2/data
+python Stage2/load_image.py --languages bn --n-per-language 1236 --output-dir Stage2/data
 
 # Train Stage 2 (image):
 sbatch Stage2/job-scripts/train.sh
@@ -102,7 +102,7 @@ LANG=zh sbatch --job-name=stage1_train_zh Stage1/job-scripts/train_lang.sh
 # ~6.5M-row dataset three separate times would be wasteful). It writes each
 # language to its own <output-dir>/<lang>/ (wit_pairs.jsonl + image_cache/)
 # automatically -- no --image-cache-dir override needed.
-python Stage2/load_image.py --languages ru,de,zh --n-per-language 745 --output-dir Stage2/data
+python Stage2/load_image.py --languages ru,de,zh --n-per-language 1236 --output-dir Stage2/data
 
 ###########################################################################
 
@@ -180,7 +180,7 @@ python Stage2/load_image.py --stats-only \
   --languages de,pt,ru,id,bn,ko,zh,jv,mn,si,ga \
   --max-rows 2000000
 
-python Stage2/load_image.py --languages am,ig,om --n-per-language 745 --output-dir Stage2/data
+python Stage2/load_image.py --languages am,ig,om --n-per-language 1236 --output-dir Stage2/data
 ###########################################################################
 
 LANG=am sbatch --job-name=stage2_train_am Stage2/job-scripts/train_lang.sh
@@ -255,6 +255,15 @@ sbatch --export=TASK=afrimgsm,LANGS="am ig om" Baseline/job-scripts/evaluate_tex
 #     Sinhalese sin_Sinh | Irish gle_Latn.
 
 # (ON WORKSTATION ONLY)####################################################
+python -m venv .venv && source .venv/bin/activate
+pip install datasets requests pillow
+pip install "datasets<4.0"
+tmux new -s M2ALIGN
+tmux new-window -n Stage2
+source .venv/bin/activate
+python Stage2/load_image.py --stats-only \
+     --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
+
 tmux new-window -t M2ALIGN -n pt
 tmux attach -t M2ALIGN:pt
 source .venv/bin/activate
@@ -300,15 +309,17 @@ LANG=si sbatch --job-name=stage1_train_si Stage1/job-scripts/train_lang.sh
 LANG=ga sbatch --job-name=stage1_train_ga Stage1/job-scripts/train_lang.sh
 
 # (ON WORKSTATION ONLY)####################################################
-# Coverage check already run above (the --stats-only call before the am/ig/om
-# Stage 2 load covers all 11 languages, these 7 included) -- re-run it here
-# only if you skipped that step or want fresh numbers:
-#   python Stage2/load_image.py --stats-only \
-#     --languages pt,id,ko,jv,mn,si,ga --max-rows 2000000
+# Coverage check for all 11 languages (re-run for fresh numbers; the
+# --stats-only call before the am/ig/om Stage 2 load above already covers
+# this too). No backslash line-continuation here on purpose -- a `#`
+# anywhere on a joined line comments out everything after it, which is what
+# silently dropped --languages/--max-rows in an earlier copy-paste attempt.
+python Stage2/load_image.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
+
 # One command, one stream pass over WIT for all 7 (see the ru/de/zh block's
 # note on why this isn't 7 separate invocations). Each language still gets
 # its own <output-dir>/<lang>/wit_pairs.jsonl + image_cache/.
-python Stage2/load_image.py --languages pt,id,ko,jv,mn,si,ga --n-per-language 745 --output-dir Stage2/data
+python Stage2/load_image.py --languages pt,id,ko,jv,mn,si,ga --n-per-language 1236 --output-dir Stage2/data
 ###########################################################################
 
 LANG=pt sbatch --job-name=stage2_train_pt Stage2/job-scripts/train_lang.sh

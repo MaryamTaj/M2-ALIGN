@@ -135,7 +135,7 @@ python -u Stage2/train.py \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --mt-path    "$MT_PATH" \
   --llm-path   "$LLM_PATH" \
-  --epochs     1 \
+  --epochs     3 \
   --lr         2e-5 \
   --train-batch-size 4 \
   --eval-batch-size  4 \
