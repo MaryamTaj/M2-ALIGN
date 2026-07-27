@@ -19,19 +19,18 @@ xgqa           -- open-ended, English short answers. Active languages:
                   bn/de/ru/zh/pt/id/ko (all 8 of xGQA's own languages that
                   this project has a checkpoint for).
 worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
-                  deferred; no African-language coverage, so nothing to run
-                  for am/ig/om)
+                  deferred)
 cvqa           -- multiple-choice dataset, but scored **open-ended via
                   answer-choice log-likelihood** (the CVQA paper's own
                   "open-ended" evaluation protocol: prompt with the question
                   only, no visible options; pick whichever choice string the
                   model assigns the highest average per-token
                   log-probability to; compare that index against the gold
-                  label). Active languages: am/ig/om, mn/si/ga (no xGQA
-                  coverage for any of these six), plus bn/ru/zh/pt/id/ko
-                  (also run through xGQA above, per the policy note).
-                  Javanese also covered but deferred. No German coverage --
-                  CVQA has no German subset at all.
+                  label). Active languages: mn/si/ga (no xGQA coverage for
+                  any of these three), plus bn/ru/zh/pt/id/ko (also run
+                  through xGQA above, per the policy note). Javanese also
+                  covered but deferred. No German coverage -- CVQA has no
+                  German subset at all.
 """
 from __future__ import annotations
 
@@ -59,9 +58,6 @@ NLLB_CODES: dict[str, str] = {
     "ru": "rus_Cyrl",
     "de": "deu_Latn",
     "zh": "zho_Hans",
-    "am": "amh_Ethi",
-    "ig": "ibo_Latn",
-    "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
     "pt": "por_Latn",
     "ko": "kor_Hang",
     "mn": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
@@ -409,7 +405,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_vqa_evaluation.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",

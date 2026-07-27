@@ -18,7 +18,6 @@ interchangeable:
     pt, id, ko xGQA + CVQA
     jv         CVQA (+ WorldCuisines, deferred) -- no xGQA coverage
     mn, si, ga CVQA only -- no xGQA or WorldCuisines coverage
-    am, ig, om CVQA only -- no xGQA/WorldCuisines African-language coverage
 
 CVQA is scored open-ended-via-likelihood -- see evaluate_vqa.py -- not as
 visible-choice multiple-choice, per the CVQA paper's own open-ended
@@ -46,25 +45,22 @@ WorldCuisines (Mohamed et al., NAACL 2025) -- `worldcuisines/vqa` on the
     Filtered client-side by the `lang` field (exact tag verified against a
     live sample at load time, logged for a sanity check -- see the Stage 3
     verification plan's "data sanity" step). Covers Indonesian/Javanese
-    only -- no Bengali, Amharic, Igbo, or Oromo coverage -- deferred, see
-    above.
+    only -- no Bengali coverage -- deferred, see above.
 
 CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
     filtered by the `Subset` field (language-country pair string). Covers
-    Amharic ('Amharic','Ethiopia'), Igbo ('Igbo','Nigeria'), Oromo
-    ('Oromo','Ethiopia'), Indonesian, and Javanese, plus -- for the newer
-    Stage 1/2 language set that has no MGSM/MSVAMP coverage and no active
-    xGQA slot -- Portuguese ('Portuguese','Brazil'), Korean ('Korean','South
-    Korea'), Mongolian ('Mongolian','Mongolia'), Sinhala ('Sinhala',
-    'Sri_Lanka'), and Irish ('Irish','Ireland'). No Bengali or German
-    coverage (German has no CVQA subset at all).
+    Indonesian and Javanese, plus -- for the newer Stage 1/2 language set
+    that has no MGSM/MSVAMP coverage and no active xGQA slot -- Portuguese
+    ('Portuguese','Brazil'), Korean ('Korean','South Korea'), Mongolian
+    ('Mongolian','Mongolia'), Sinhala ('Sinhala', 'Sri_Lanka'), and Irish
+    ('Irish','Ireland'). No Bengali or German coverage (German has no CVQA
+    subset at all).
 
 Usage
 -----
     # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
     # resolved relative to this script's own location, not the cwd:
     python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko
-    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages am,ig,om
 
     # bn/ru/zh/pt/id/ko all have BOTH xGQA and CVQA coverage -- run both,
     # they're independent evaluations, not redundant (zh here is
@@ -108,9 +104,6 @@ WORLDCUISINES_LANG_CANDIDATES: dict[str, list[str]] = {
 CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
     "id": ["indonesian"],
     "jv": ["javanese"],
-    "am": ["amharic"],
-    "ig": ["igbo"],
-    "om": ["oromo"],
     # Added to cover Stage 1/2's newer language set (none of these five have
     # MGSM/MSVAMP coverage). pt/ko are also active in xGQA -- run both, per
     # policy above; mn/si/ga have no xGQA coverage, so CVQA is their only
@@ -296,7 +289,7 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
     """Load CVQA test rows filtered to one language.
 
     Args:
-        lang: One of the keys in :data:`CVQA_SUBSET_CANDIDATES` (``am``/``ig``/``om``).
+        lang: One of the keys in :data:`CVQA_SUBSET_CANDIDATES` (e.g. ``mn``/``si``/``ga``).
         logger: Logger instance.
 
     Returns:

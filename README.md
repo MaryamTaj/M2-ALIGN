@@ -112,8 +112,8 @@ LANG=zh sbatch --job-name=stage2_train_zh Stage2/job-scripts/train_lang.sh
 
 # (ON WORKSTATION ONLY)####################################################
 # --output must be Stage3/data/english.jsonl -- that's the filename every
-# load_vqa_data_lang.sh run (ru/de/zh, am/ig/om, and the 7-language block
-# further below) reads via GQA_JSONL, regardless of target language.
+# load_vqa_data_lang.sh run (ru/de/zh and the 7-language block further
+# below) reads via GQA_JSONL, regardless of target language.
 python Stage3/dump_gqa_sample.py --n_samples 30000 --seed 42 --output Stage3/data/english.jsonl
 
 LANG=ru sbatch --job-name=stage3b_load_vqa_ru Stage3/job-scripts/load_vqa_data_lang.sh
@@ -150,98 +150,16 @@ sbatch --export=TASK=msvamp,LANGS="ru de zh" Baseline/job-scripts/evaluate_text.
 
 
 
-# (ON WORKSTATION ONLY)####################################################
-tmux new-window -t M2ALIGN -n am
-tmux attach -t M2ALIGN:am
-source .venv/bin/activate
-python Stage1/load_text.py --languages Amharic --output_dir Stage1/data --n_samples 100000
-
-tmux new-window -t M2ALIGN -n ig
-tmux attach -t M2ALIGN:ig
-source .venv/bin/activate
-python Stage1/load_text.py --languages Igbo    --output_dir Stage1/data --n_samples 100000
-
-tmux new-window -t M2ALIGN -n om
-tmux attach -t M2ALIGN:om
-source .venv/bin/activate
-python Stage1/load_text.py --languages Oromo   --output_dir Stage1/data --n_samples 100000
-###########################################################################
-
-LANG=am sbatch --job-name=stage1_train_am Stage1/job-scripts/train_lang.sh
-LANG=ig sbatch --job-name=stage1_train_ig Stage1/job-scripts/train_lang.sh
-LANG=om sbatch --job-name=stage1_train_om Stage1/job-scripts/train_lang.sh
-
-# (ON WORKSTATION ONLY)####################################################
-# am/ig/om Wikipedia are far smaller than ru/de/zh's -- check real coverage
-# before committing to a download. (This --languages list happens to
-# include all 11 languages in the project, not just am/ig/om, so it doubles
-# as the coverage check for the pt/id/ko/jv/mn/si/ga block further below.)
-python Stage2/load_image.py --stats-only \
-  --languages de,pt,ru,id,bn,ko,zh,jv,mn,si,ga \
-  --max-rows 2000000
-
-python Stage2/load_image.py --languages am,ig,om --n-per-language 1236 --output-dir Stage2/data
-###########################################################################
-
-LANG=am sbatch --job-name=stage2_train_am Stage2/job-scripts/train_lang.sh
-LANG=ig sbatch --job-name=stage2_train_ig Stage2/job-scripts/train_lang.sh
-LANG=om sbatch --job-name=stage2_train_om Stage2/job-scripts/train_lang.sh
-
-# (ON WORKSTATION ONLY)####################################################
-# No new GQA sampling: Stage3/data/english.jsonl (from dump_gqa_sample.py,
-# already produced for the ru/de/zh round) is the same sampled GQA English
-# regardless of target language -- reused as-is.
-LANG=am sbatch --job-name=stage3b_load_vqa_am Stage3/job-scripts/load_vqa_data_lang.sh
-LANG=ig sbatch --job-name=stage3b_load_vqa_ig Stage3/job-scripts/load_vqa_data_lang.sh
-LANG=om sbatch --job-name=stage3b_load_vqa_om Stage3/job-scripts/load_vqa_data_lang.sh
-python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages am,ig,om
-python Stage3/load_text_evaluation.py --tasks afrimgsm --languages am ig om
-###########################################################################
-
-# GQA training images: same vg_image_ids as the ru/de/zh round (same shared
-# english.jsonl) -- should already be covered by the existing
-# Stage3/data/gqa/images/ extraction. Verify, don't assume:
-jq -r '.vg_image_id' Stage3/data/am.jsonl Stage3/data/ig.jsonl Stage3/data/om.jsonl | sort -u > /tmp/needed_ids_afr.txt
-ls Stage3/data/gqa/images | sed 's/\.jpg$//' | sort -u > /tmp/have_ids.txt
-comm -23 /tmp/needed_ids_afr.txt /tmp/have_ids.txt | wc -l   # must print 0
-# CVQA eval images are resolved by URL (like WIT), not GQA image id -- no
-# images.zip dependency for eval, only for Stage 3 training above.
-
-LANG=am sbatch --job-name=stage3b_train_vqa_am Stage3/job-scripts/train_vqa_lang.sh
-LANG=ig sbatch --job-name=stage3b_train_vqa_ig Stage3/job-scripts/train_vqa_lang.sh
-LANG=om sbatch --job-name=stage3b_train_vqa_om Stage3/job-scripts/train_vqa_lang.sh
-
-LANG=am BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=am BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=ig BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=ig BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=om BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=om BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-
-LANG=am TASK=afrimgsm sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=ig TASK=afrimgsm sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=om TASK=afrimgsm sbatch Stage3/job-scripts/evaluate_text_lang.sh
-
-
-# Baseline (raw Qwen3-VL, no checkpoint dependency -- can run any time, even now):
-sbatch --export=BENCHMARK=cvqa,LANG=am Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=ig Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=om Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=TASK=afrimgsm,LANGS="am ig om" Baseline/job-scripts/evaluate_text.sh
-
-
-
-
 # Expanding to the remaining 7 languages (Portuguese, Indonesian, Korean,
 # Javanese, Mongolian, Sinhalese, Irish) -- rounds the project out to all
-# 11 languages (bn/de/ru/zh + am/ig/om above + these 7).
+# 11 languages (bn/de/ru/zh + these 7).
 #
 # Differences from every block above:
-#   - No MGSM/MSVAMP/AfriMGSM coverage for any of these 7 -- none of those
-#     three benchmarks have configs for pt/id/ko/jv/mn/si/ga, so there is
-#     no Stage 3a *text* eval step for this block at all (skip straight to
-#     VQA eval below). This is a real gap, not an oversight -- there's no
-#     fix short of finding/adding a different text benchmark.
+#   - No MGSM/MSVAMP coverage for any of these 7 -- neither benchmark has
+#     configs for pt/id/ko/jv/mn/si/ga, so there is no Stage 3a *text* eval
+#     step for this block at all (skip straight to VQA eval below). This is
+#     a real gap, not an oversight -- there's no fix short of finding/adding
+#     a different text benchmark.
 #   - VQA eval policy: run every benchmark a language has coverage in, not
 #     just one -- xGQA and CVQA are independent evaluations. pt/id/ko have
 #     BOTH (xGQA's own 8-language set includes them, now activated in
@@ -310,8 +228,8 @@ LANG=ga sbatch --job-name=stage1_train_ga Stage1/job-scripts/train_lang.sh
 
 # (ON WORKSTATION ONLY)####################################################
 # Coverage check for all 11 languages (re-run for fresh numbers; the
-# --stats-only call before the am/ig/om Stage 2 load above already covers
-# this too). No backslash line-continuation here on purpose -- a `#`
+# --stats-only call earlier in this block already covers this too). No
+# backslash line-continuation here on purpose -- a `#`
 # anywhere on a joined line comments out everything after it, which is what
 # silently dropped --languages/--max-rows in an earlier copy-paste attempt.
 python Stage2/load_image.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
@@ -347,7 +265,7 @@ LANG=ga sbatch --job-name=stage3b_load_vqa_ga Stage3/job-scripts/load_vqa_data_l
 # needed). jv/mn/si/ga: CVQA only, no xGQA coverage for these four.
 python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages pt,id,ko
 python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages pt,id,ko,jv,mn,si,ga
-# No load_text_evaluation.py call here -- see the "no MGSM/MSVAMP/AfriMGSM
+# No load_text_evaluation.py call here -- see the "no MGSM/MSVAMP
 # coverage" note above.
 ###########################################################################
 

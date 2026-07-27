@@ -10,8 +10,6 @@ Supported tasks
 ---------------
 mgsm     – Multilingual Grade School Math    (juletxara/mgsm)
 msvamp   – Multilingual SVAMP               (Mathoctopus/MSVAMP)
-afrimgsm – MGSM human-translated into African languages (masakhane/afrimgsm),
-           covering the low-resource languages MGSM itself doesn't (am/ig/om).
 
 x-csqa and xnli are not supported here (dropped to match Stage 3a): standard
 XNLI's language list is ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg"
@@ -39,13 +37,11 @@ MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 TASK_DEFAULT_LANGS: dict[str, list[str]] = {
     "mgsm":   ["en", "sw", "bn"],
     "msvamp": ["en", "sw", "bn"],
-    "afrimgsm": ["am", "ig", "om"],
 }
 
 TASK_MAX_NEW_TOKENS: dict[str, int] = {
     "mgsm": 512,
     "msvamp": 512,
-    "afrimgsm": 512,
 }
 
 _MATH_SYSTEM = "You are a helpful assistant that solves math problems step by step."
@@ -146,11 +142,7 @@ def load_msvamp(lang: str, eval_data_dir: str) -> list[dict]:
     return _read_jsonl(os.path.join(eval_data_dir, "msvamp", f"{lang}.jsonl"))
 
 
-def load_afrimgsm(lang: str, eval_data_dir: str) -> list[dict]:
-    return _read_jsonl(os.path.join(eval_data_dir, "afrimgsm", f"{lang}.jsonl"))
-
-
-_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "afrimgsm": load_afrimgsm}
+_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
 
 
 # ─── Prompt builders (identical to Stage3/evaluate_text.py) ────────────────
@@ -255,7 +247,7 @@ def main() -> None:
         description="Baseline Qwen3-VL evaluation on multilingual benchmarks (no mapping layer)."
     )
     parser.add_argument(
-        "--task", required=True, choices=["mgsm", "msvamp", "afrimgsm"],
+        "--task", required=True, choices=["mgsm", "msvamp"],
         help="Benchmark to evaluate.",
     )
     parser.add_argument("--model-id", default=MODEL_ID)

@@ -90,14 +90,6 @@ WIT_TO_NLLB: dict[str, str] = {
     # Stage 3 VQA-track language (see Stage3 plan). Run
     # `--stats-only --languages bn` before committing to a full download.
     "bn": "ben_Beng",
-    # Low-resource VQA-track languages (CVQA + AfriMGSM eval). Wikipedia is
-    # much smaller for these three than for bn/ru/de/zh -- run
-    # `--stats-only --languages am,ig,om` before committing to a full
-    # download; WIT coverage may cap the achievable n-per-language well
-    # below the 745 used for ru/de/zh.
-    "am": "amh_Ethi",
-    "ig": "ibo_Latn",
-    "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
     "id": "ind_Latn",
     "jv": "jav_Latn",
     "mn": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
@@ -115,9 +107,6 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "tr": "Turkish",   "uk": "Ukrainian", "vi": "Vietnamese",
     "zh": "Chinese",
     "bn": "Bengali",
-    "am": "Amharic",
-    "ig": "Igbo",
-    "om": "Oromo",
     "id": "Indonesian",
     "jv": "Javanese",
     "mn": "Mongolian",

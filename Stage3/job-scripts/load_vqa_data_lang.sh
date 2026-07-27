@@ -34,9 +34,6 @@
 #   LANG=ru sbatch --job-name=stage3b_load_vqa_ru load_vqa_data_lang.sh
 #   LANG=de sbatch --job-name=stage3b_load_vqa_de load_vqa_data_lang.sh
 #   LANG=zh sbatch --job-name=stage3b_load_vqa_zh load_vqa_data_lang.sh
-#   LANG=am sbatch --job-name=stage3b_load_vqa_am load_vqa_data_lang.sh
-#   LANG=ig sbatch --job-name=stage3b_load_vqa_ig load_vqa_data_lang.sh
-#   LANG=om sbatch --job-name=stage3b_load_vqa_om load_vqa_data_lang.sh
 #   LANG=pt sbatch --job-name=stage3b_load_vqa_pt load_vqa_data_lang.sh
 #   LANG=id sbatch --job-name=stage3b_load_vqa_id load_vqa_data_lang.sh
 #   LANG=ko sbatch --job-name=stage3b_load_vqa_ko load_vqa_data_lang.sh
@@ -48,7 +45,7 @@
 set -euo pipefail
 
 declare -A LANG_NAMES=(
-  [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo"
+  [ru]="Russian" [de]="German" [zh]="Chinese"
   [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
   [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
 )

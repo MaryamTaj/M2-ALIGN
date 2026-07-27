@@ -29,15 +29,11 @@ LANG_TO_NLLB = {
     "Russian": "rus_Cyrl",
     "German": "deu_Latn",
     "Chinese": "zho_Hans",
-    # Low-resource VQA-track languages (CVQA + AfriMGSM eval; Yoruba dropped
-    # for now -- WorldCuisines has no Yoruba coverage and xGQA has no Oromo/
-    # Igbo/Amharic coverage, so all three ship with CVQA/AfriMGSM instead).
-    "Amharic": "amh_Ethi",
-    "Igbo": "ibo_Latn",
-    "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
-    # Rounding out the 11-language set (see Stage2/load_image.py's
+    # Low-resource VQA-track languages (CVQA eval; Yoruba dropped for now --
+    # WorldCuisines has no Yoruba coverage).
+    # Rounding out the language set (see Stage2/load_image.py's
     # WIT_TO_NLLB, which already covers these): CVQA is these languages'
-    # VQA-eval path (no MGSM/MSVAMP/xGQA coverage for any of the seven).
+    # VQA-eval path (no MGSM/MSVAMP/xGQA coverage for any of them).
     "Portuguese": "por_Latn",
     "Indonesian": "ind_Latn",
     "Korean": "kor_Hang",

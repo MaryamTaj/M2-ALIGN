@@ -499,9 +499,13 @@ if __name__ == "__main__":
         "Russian": "rus_Cyrl",
         "German": "deu_Latn",
         "Chinese": "zho_Hans",
-        "Amharic": "amh_Ethi",
-        "Igbo": "ibo_Latn",
-        "Oromo": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
+        "Portuguese": "por_Latn",
+        "Indonesian": "ind_Latn",
+        "Korean": "kor_Hang",
+        "Javanese": "jav_Latn",
+        "Mongolian": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
+        "Sinhalese": "sin_Sinh",
+        "Irish": "gle_Latn",
     }
     langs_map_m2m = {
         "English": "en", "Swahili": "sw", "Chinese": "zh", "Bengali": "bn",

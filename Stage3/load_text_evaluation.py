@@ -1,4 +1,4 @@
-"""Download the MGSM/MSVAMP/AfriMGSM evaluation sets and materialize them to JSONL.
+"""Download the MGSM/MSVAMP evaluation sets and materialize them to JSONL.
 
 Every other data source in this pipeline (Stage1/load_text.py,
 Stage2/load_image.py, Stage3/load_text_data.py, Stage3/load_vqa_data.py,
@@ -21,16 +21,9 @@ Output layout (resolved relative to this script's location, not the cwd):
 
     Stage3/data/stage3a_eval/mgsm/{lang}.jsonl
     Stage3/data/stage3a_eval/msvamp/{lang}.jsonl
-    Stage3/data/stage3a_eval/afrimgsm/{lang}.jsonl
 
 Both Stage3/evaluate_text.py and Baseline/evaluate_text.py read from this
 same directory by default, so both runs score the exact same rows.
-
-Usage for the low-resource languages (am/ig/om; Yoruba dropped, xGQA/
-WorldCuisines have no coverage for any of these four so CVQA covers the
-VQA side instead -- see Stage3/load_vqa_evaluation.py):
-
-    python Stage3/load_text_evaluation.py --tasks afrimgsm --languages am ig om
 """
 from __future__ import annotations
 
@@ -51,21 +44,9 @@ from datasets import load_dataset
 TASKS: dict[str, str] = {
     "mgsm": "juletxara/mgsm",
     "msvamp": "Mathoctopus/MSVAMP",
-    "afrimgsm": "masakhane/afrimgsm",
 }
 
 DEFAULT_LANGS: list[str] = ["en"]
-
-# afrimgsm's HF configs use 3-letter codes, not our pipeline's 2-letter ISO
-# codes (am/ig/om) used everywhere else (NLLB_CODES, CVQA_SUBSET_CANDIDATES,
-# WIT_TO_NLLB, ...) -- these are a different naming scheme for the same
-# language, not a typo; don't conflate "orm" (this dataset's config key)
-# with NLLB's "gaz_Latn" FLORES tag for Oromo.
-AFRIMGSM_HF_CONFIG: dict[str, str] = {
-    "am": "amh",
-    "ig": "ibo",
-    "om": "orm",
-}
 
 
 def setup_logging(log_dir: str) -> logging.Logger:
@@ -109,25 +90,7 @@ def load_msvamp(lang: str) -> list[dict]:
     ]
 
 
-def load_afrimgsm(lang: str) -> list[dict]:
-    """Load AfriMGSM's test split (250 rows/language, same size as MGSM).
-
-    Row schema: question, answer (often null), answer_number, equation_solution
-    -- mirrors load_mgsm's defensive field selection since "answer" isn't
-    always populated.
-    """
-    if lang not in AFRIMGSM_HF_CONFIG:
-        raise ValueError(f"No AfriMGSM coverage configured for {lang!r}; allowed: {sorted(AFRIMGSM_HF_CONFIG)}")
-    hf_config = AFRIMGSM_HF_CONFIG[lang]
-    ds = load_dataset("masakhane/afrimgsm", hf_config, split="test")
-    return [
-        {"question": str(r["question"]),
-         "answer": str(r.get("answer") or r.get("answer_number") or "").replace(",", "")}
-        for r in ds
-    ]
-
-
-_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "afrimgsm": load_afrimgsm}
+_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
 
 
 def main() -> None:

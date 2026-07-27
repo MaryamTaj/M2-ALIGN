@@ -20,9 +20,6 @@
 #   LANG=ru sbatch --job-name=stage1_train_ru train_lang.sh
 #   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
-#   LANG=am sbatch --job-name=stage1_train_am train_lang.sh
-#   LANG=ig sbatch --job-name=stage1_train_ig train_lang.sh
-#   LANG=om sbatch --job-name=stage1_train_om train_lang.sh
 #   LANG=pt sbatch --job-name=stage1_train_pt train_lang.sh
 #   LANG=id sbatch --job-name=stage1_train_id train_lang.sh
 #   LANG=ko sbatch --job-name=stage1_train_ko train_lang.sh
@@ -36,7 +33,7 @@
 set -euo pipefail
 
 declare -A LANG_NAMES=(
-  [ru]="Russian" [de]="German" [zh]="Chinese" [am]="Amharic" [ig]="Igbo" [om]="Oromo"
+  [ru]="Russian" [de]="German" [zh]="Chinese"
   [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
   [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
 )
@@ -122,7 +119,7 @@ cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 # --master_port varies by LANG so parallel submissions for different
 # languages don't collide on the same deepspeed rendezvous port.
 declare -A PORTS=(
-  [ru]=50011 [de]=50012 [zh]=50013 [am]=50014 [ig]=50015 [om]=50016
+  [ru]=50011 [de]=50012 [zh]=50013
   [pt]=50017 [id]=50018 [ko]=50019 [jv]=50020 [mn]=50021 [si]=50022 [ga]=50023
 )
 deepspeed --master_port "${PORTS[$LANG]}" train.py --deepspeed \

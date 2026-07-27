@@ -17,8 +17,6 @@ Supported tasks
 ---------------
 mgsm     – Multilingual Grade School Math    (juletxara/mgsm)
 msvamp   – Multilingual SVAMP               (Mathoctopus/MSVAMP)
-afrimgsm – MGSM human-translated into African languages (masakhane/afrimgsm),
-           covering the low-resource languages MGSM itself doesn't (am/ig/om).
 
 x-csqa and xnli were dropped for now: standard XNLI's language list is
 ar/bg/de/el/en/es/fr/hi/ru/sw/th/tr/ur/vi/zh -- "bg" is Bulgarian, not
@@ -69,21 +67,16 @@ NLLB_CODES: dict[str, str] = {
     "tr": "tur_Latn",
     "ur": "urd_Arab",
     "vi": "vie_Latn",
-    "am": "amh_Ethi",
-    "ig": "ibo_Latn",
-    "om": "gaz_Latn",  # NLLB-200 tags West Central Oromo "gaz_Latn", not "orm_Latn"
 }
 
 TASK_DEFAULT_LANGS: dict[str, list[str]] = {
     "mgsm":   ["de", "es", "fr", "ru", "zh", "ja", "th", "sw", "bn", "te", "en"],
     "msvamp": ["de", "es", "fr", "ru", "zh", "ja", "th", "sw", "bn", "en"],
-    "afrimgsm": ["am", "ig", "om"],
 }
 
 TASK_MAX_NEW_TOKENS: dict[str, int] = {
     "mgsm": 512,
     "msvamp": 512,
-    "afrimgsm": 512,
 }
 
 _MATH_SYSTEM = "You are a helpful assistant that solves math problems step by step."
@@ -257,11 +250,7 @@ def load_msvamp(lang: str, eval_data_dir: str) -> list[dict]:
     return _read_jsonl(os.path.join(eval_data_dir, "msvamp", f"{lang}.jsonl"))
 
 
-def load_afrimgsm(lang: str, eval_data_dir: str) -> list[dict]:
-    return _read_jsonl(os.path.join(eval_data_dir, "afrimgsm", f"{lang}.jsonl"))
-
-
-_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp, "afrimgsm": load_afrimgsm}
+_LOADERS = {"mgsm": load_mgsm, "msvamp": load_msvamp}
 
 
 # ─── Prompt builders (identical to Baseline/evaluate_text.py) ───────────────
@@ -388,7 +377,7 @@ def main() -> None:
         description="Stage 3 AugmentedMindMerger evaluation on multilingual text benchmarks."
     )
     parser.add_argument(
-        "--task", required=True, choices=["mgsm", "msvamp", "afrimgsm"],
+        "--task", required=True, choices=["mgsm", "msvamp"],
         help="Benchmark to evaluate.",
     )
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
