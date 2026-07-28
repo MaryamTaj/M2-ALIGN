@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage3a_train_text
+#SBATCH --job-name=stage3b_train
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,30 +9,40 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3a_train_text_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Stage3/logs/stage3b_train_%x_%j.log
 
-# Usage: TASK=mgsm sbatch train_text.sh
-#   Supported tasks: mgsm, msvamp (xnli/xcsqa dropped for now — see
-#   Stage3/load_text_data.py)
-#   Reads data from Stage3/data/stage3a/<task>/<task>.jsonl
-#   Warm-starts from Stage 2's vision-mapping checkpoint (chained lineage:
-#   Stage 1 -> Stage 2 -> Stage 3a -> Stage 3b)
-#   Saves checkpoint to Stage3/outputs/stage3a/<task>/pytorch_model.bin
+# Per-language Stage 3b VQA training (AugmentedVisualMindMerger). Used for
+# every language, including Bengali -- outputs/<lang> is the same convention
+# for all of them.
+#   Reads Stage3/data/$LANG.jsonl (a single flat file, not a directory)
+#   Warm-starts from Stage2/outputs/$LANG (that language's own Stage 2 checkpoint)
+#   Saves Stage3/outputs/$LANG/pytorch_model.bin
+#   Reuses the shared GQA_IMAGES_DIR (same underlying images across
+#   languages -- see load_translated_data.sh).
+#
+# Usage:
+#   LANG=ru sbatch --job-name=stage3b_train_ru train.sh
+#   LANG=de sbatch --job-name=stage3b_train_de train.sh
+#   LANG=zh sbatch --job-name=stage3b_train_zh train.sh
 
 set -euo pipefail
 
-TASK="${TASK:-mgsm}"
+LANG="${LANG:-ru}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
-STAGE2="$PROJECT_ROOT/Stage2"
-STAGE3="$PROJECT_ROOT/Stage3"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN"
+STAGE2="$DATA_ROOT/Stage2"
+STAGE3="$DATA_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
-STAGE2_MAPPING_CKPT="$STAGE2/outputs/wit/pytorch_model.bin"
+GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
+STAGE2_MAPPING_CKPT="$STAGE2/outputs/$LANG/pytorch_model.bin"
 
-DATA_DIR="$STAGE3/data/stage3a/$TASK"
-OUTPUT_DIR="$STAGE3/outputs/stage3a/$TASK"
+DATA_DIR="$STAGE3/data/$LANG.jsonl"
+OUTPUT_DIR="$STAGE3/outputs/$LANG"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -46,8 +56,7 @@ fi
 echo "=== Job info ==="
 date
 hostname
-echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}"
-echo "TASK=$TASK"
+echo "SLURM_JOB_ID=${SLURM_JOB_ID:-unset}  LANG=$LANG"
 nvidia-smi || true
 echo
 
@@ -63,7 +72,6 @@ echo
 echo "=== Activate virtual environment ==="
 source "$SCRATCH/venvs/m2-align/bin/activate"
 python -V
-python -m pip -V
 echo
 
 echo "=== Hugging Face cache/offline config ==="
@@ -73,9 +81,9 @@ export HF_DATASETS_CACHE="$HF_HOME/datasets"
 mkdir -p "$HF_HOME" "$TRANSFORMERS_CACHE" "$HF_DATASETS_CACHE"
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
-echo "HF_HOME=$HF_HOME"
 echo "LLM_PATH=$LLM_PATH"
 echo "MT_PATH=$MT_PATH"
+echo "GQA_IMAGES_DIR=$GQA_IMAGES_DIR"
 echo
 
 echo "=== Load secrets (.tokens) ==="
@@ -96,41 +104,46 @@ if [ ! -d "$MT_PATH" ]; then
   echo "ERROR: MT snapshot path not found: $MT_PATH"
   exit 1
 fi
-if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
-  echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
-  echo "       Run: LANG=bn sbatch Stage2/job-scripts/train_lang.sh"
+if [ ! -d "$GQA_IMAGES_DIR" ]; then
+  echo "ERROR: GQA images directory not found: $GQA_IMAGES_DIR"
   exit 1
 fi
-if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then
-  echo "ERROR: No .jsonl files found in DATA_DIR: $DATA_DIR"
-  echo "       Run: TASK=$TASK sbatch Stage3/job-scripts/load_text.sh"
+if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
+  echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
+  echo "       Run: LANG=$LANG sbatch Stage2/job-scripts/train.sh"
+  exit 1
+fi
+if [ ! -f "$DATA_DIR" ]; then
+  echo "ERROR: Data file not found: $DATA_DIR"
+  echo "       Run: LANG=$LANG sbatch Stage3/job-scripts/load_translated_data.sh"
   exit 1
 fi
 
-echo "=== Start Stage 3a training: $TASK ==="
+echo "=== Start Stage 3b VQA training ($LANG) ==="
 echo "DATA_DIR=$DATA_DIR"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
 echo "STAGE2_MAPPING_CKPT=$STAGE2_MAPPING_CKPT"
 echo
 cd "$PROJECT_ROOT"
-python -u Stage3/train_text.py \
-  --task       "$TASK" \
+python -u Stage3/train.py \
+  --data-dir    "$DATA_DIR" \
+  --images-dir  "$GQA_IMAGES_DIR" \
+  --output-dir  "$OUTPUT_DIR" \
   --init-mapping-ckpt "$STAGE2_MAPPING_CKPT" \
-  --data-dir   "$DATA_DIR" \
-  --output-dir "$OUTPUT_DIR" \
-  --mt-path    "$MT_PATH" \
-  --llm-path   "$LLM_PATH" \
-  --epochs     3 \
-  --lr         2e-5 \
-  --train-batch-size 2 \
-  --eval-batch-size  2 \
-  --grad-accum 8 \
-  --max-seq-len 512 \
-  --max-gen-len 512 \
+  --mt-path     "$MT_PATH" \
+  --llm-path    "$LLM_PATH" \
+  --epochs      3 \
+  --lr          2e-5 \
+  --train-batch-size 4 \
+  --eval-batch-size  4 \
+  --grad-accum  8 \
+  --max-mt-seq-len 256 \
+  --max-seq-len 256 \
+  --max-gen-len 16 \
   --use-wandb \
   --wandb-mode    offline \
   --wandb-project m2-align \
-  --wandb-run-name "stage3a-$TASK" \
+  --wandb-run-name "stage3b-vqa-$LANG" \
   --local-files-only
 
 echo "=== Done ==="

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage2_train_lang
+#SBATCH --job-name=stage2_train
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,30 +9,34 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage2/logs/stage2_train_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Stage2/logs/stage2_train_%x_%j.log
 
 # Per-language Stage 2 training -- warm-starts from that language's own
-# Stage 1 checkpoint (Stage1/outputs/$LANG) and saves its own
-# checkpoint, independent of the other languages and of Bengali's
-# Stage2/outputs/wit. Each language has its own image cache dir
-# (Stage2/data/$LANG/image_cache), matching load_image.py's per-language
-# output layout.
+# Stage 1 checkpoint ($SCRATCH/M2-ALIGN/Stage1/outputs/$LANG) and saves its own
+# checkpoint, independent of the other languages (run with LANG=bn for
+# Bengali -- same outputs/$LANG convention as everyone else, no exception).
+# Each language has its own image cache dir (Stage2/data/$LANG/image_cache),
+# matching load_image.py's per-language output layout.
 #
 # Usage:
-#   LANG=ru sbatch --job-name=stage2_train_ru train_lang.sh
-#   LANG=de sbatch --job-name=stage2_train_de train_lang.sh
-#   LANG=zh sbatch --job-name=stage2_train_zh train_lang.sh
+#   LANG=ru sbatch --job-name=stage2_train_ru train.sh
+#   LANG=de sbatch --job-name=stage2_train_de train.sh
+#   LANG=zh sbatch --job-name=stage2_train_zh train.sh
 #
-# Reads Stage2/data/$LANG/wit_pairs.jsonl and Stage1/outputs/$LANG/pytorch_model.bin
-# Saves Stage2/outputs/$LANG/pytorch_model.bin
+# Reads $SCRATCH/M2-ALIGN/Stage2/data/$LANG/wit_pairs.jsonl and
+#       $SCRATCH/M2-ALIGN/Stage1/outputs/$LANG/pytorch_model.bin
+# Saves  $SCRATCH/M2-ALIGN/Stage2/outputs/$LANG/pytorch_model.bin
 
 set -euo pipefail
 
 LANG="${LANG:-ru}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
-STAGE1="$PROJECT_ROOT/Stage1"
-STAGE2="$PROJECT_ROOT/Stage2"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN"
+STAGE1="$DATA_ROOT/Stage1"
+STAGE2="$DATA_ROOT/Stage2"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
@@ -104,7 +108,7 @@ if [ ! -d "$MT_PATH" ]; then
 fi
 if [ ! -f "$STAGE1_MAPPING_CKPT" ]; then
   echo "ERROR: Stage 1 mapping checkpoint not found: $STAGE1_MAPPING_CKPT"
-  echo "       Run: LANG=$LANG sbatch Stage1/job-scripts/train_lang.sh"
+  echo "       Run: LANG=$LANG sbatch Stage1/job-scripts/train.sh"
   exit 1
 fi
 if [ ! -f "$DATA_PATH" ]; then

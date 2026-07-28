@@ -35,7 +35,7 @@ Usage
     python load_image.py \\
         --languages fr,de,zh,ar,hi,sw \\
         --n-per-language 50000 \\
-        --output-dir ./data
+        --output-dir $SCRATCH/M2-ALIGN/Stage2/data
 """
 from __future__ import annotations
 
@@ -53,6 +53,9 @@ from datetime import datetime
 import requests
 from datasets import load_dataset
 from PIL import Image
+
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage2")
 
 # How often (in rows scanned) to log progress / persist a checkpoint.
 PROGRESS_EVERY = 20_000
@@ -716,7 +719,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir", type=str,
-        default=os.path.join(os.path.dirname(__file__), "data"),
+        default=os.path.join(SCRATCH_ROOT, "data"),
         help=(
             "Each language gets its own subdirectory here: "
             "<output-dir>/<lang>/wit_pairs.jsonl and "
@@ -762,7 +765,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
 
     lang_codes = [c.strip() for c in args.languages.split(",") if c.strip()]
     for code in lang_codes:

@@ -4,7 +4,7 @@ Loads the trained AugmentedVisualMindMerger (NLLB encoder -> mapping ->
 frozen Qwen3-VL + LLM-side query prefix) and evaluates on whichever of
 xGQA / WorldCuisines / CVQA applies per language (see the Stage 3 plan's
 language survey). No NLLB-translated data is ever used here -- only the
-JSONL files produced by load_vqa_evaluation.py (real/native benchmarks).
+JSONL files produced by load_evaluation_data.py (real/native benchmarks).
 
 Run this against the Stage 2 checkpoint (zero-shot, no VQA training yet --
 the primary hypothesis's "before" reference point) and again against the
@@ -41,7 +41,6 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
 
 import requests
 import torch
@@ -50,6 +49,9 @@ from transformers import AutoProcessor, AutoTokenizer, NllbTokenizer
 from tqdm import tqdm
 
 from model import AugmentedVisualMindMerger
+
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
 
 NLLB_CODES: dict[str, str] = {
     "bn": "ben_Beng",
@@ -69,7 +71,7 @@ _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
 
 
 def build_open_ended_prompt(question: str) -> str:
-    """Must match train_vqa.py's `_build_user_prompt` exactly."""
+    """Must match train.py's `_build_user_prompt` exactly."""
     return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
@@ -84,15 +86,16 @@ def build_cvqa_open_ended_prompt(question: str) -> str:
 # Logging
 # ---------------------------------------------------------------------------
 
-def setup_logging(log_dir: str, benchmark: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+def setup_logging(benchmark: str) -> logging.Logger:
+    """Create a logger that writes to stdout.
+
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
+    """
     logger = logging.getLogger(f"stage3b_eval_{benchmark}")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(os.path.join(log_dir, f"stage3b_eval_{benchmark}_{ts}.log"))
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     logger.addHandler(ch)
@@ -406,9 +409,9 @@ def main() -> None:
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True,
                          help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
-    parser.add_argument("--eval-data", required=True, help="JSONL from load_vqa_evaluation.py.")
+    parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
-    parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
+    parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "stage3b_eval", "image_cache"),
                         help="URL image cache dir (used for worldcuisines/cvqa).")
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--mt-path", default="facebook/nllb-200-3.3B")
@@ -427,7 +430,7 @@ def main() -> None:
     if args.benchmark == "xgqa" and not args.images_dir:
         parser.error("--images-dir is required for --benchmark xgqa")
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"), args.benchmark)
+    logger = setup_logging(args.benchmark)
     max_examples = 5 if args.smoke else args.max_examples
 
     rows = _read_jsonl(args.eval_data)

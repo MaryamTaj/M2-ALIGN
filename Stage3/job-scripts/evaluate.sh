@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage3b_evaluate_vqa
+#SBATCH --job-name=stage3b_evaluate
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,30 +9,32 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3b_evaluate_vqa_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Stage3/logs/stage3b_evaluate_%x_%j.log
 
-# Usage — run this against BOTH checkpoints per the Stage 3 verification
-# plan: CHECKPOINT_STAGE=stage2 is the primary hypothesis's "before"
-# reference (vision-mapping only, zero-shot on VQA prompts); CHECKPOINT_STAGE=stage3b
-# is the "after" result. Bengali/xgqa is the only active combination right
-# now (Indonesian/Javanese, and worldcuisines/cvqa, are deferred — the
-# loaders still work if you re-enable them, but nothing covers Bengali
-# there so there's nothing to run for them today):
-#   BENCHMARK=xgqa LANG=bn CHECKPOINT_STAGE=stage2  sbatch evaluate_vqa.sh
-#   BENCHMARK=xgqa LANG=bn CHECKPOINT_STAGE=stage3b sbatch evaluate_vqa.sh
+# Per-language xGQA evaluation -- LANG selects both the eval-data language
+# AND the checkpoint (every language, including Bengali, has its own
+# Stage2/Stage3b checkpoint at outputs/$LANG).
 #
-# Optional: MAX_EXAMPLES=50 sbatch evaluate_vqa.sh
+# Usage:
+#   BENCHMARK=xgqa LANG=ru CHECKPOINT_STAGE=stage2  sbatch evaluate.sh
+#   BENCHMARK=xgqa LANG=ru CHECKPOINT_STAGE=stage3b sbatch evaluate.sh
+#   (repeat with LANG=de, LANG=zh, LANG=bn, ...)
+#
+# Optional: MAX_EXAMPLES=50 sbatch evaluate.sh
 
 set -euo pipefail
 
 BENCHMARK="${BENCHMARK:-xgqa}"
-LANG="${LANG:-bn}"
+LANG="${LANG:-ru}"
 CHECKPOINT_STAGE="${CHECKPOINT_STAGE:-stage3b}"   # stage2 (before) or stage3b (after)
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
-STAGE2="$PROJECT_ROOT/Stage2"
-STAGE3="$PROJECT_ROOT/Stage3"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN"
+STAGE2="$DATA_ROOT/Stage2"
+STAGE3="$DATA_ROOT/Stage3"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
@@ -40,9 +42,9 @@ GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 EVAL_DATA="$STAGE3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
 
 if [ "$CHECKPOINT_STAGE" = "stage2" ]; then
-  MAPPING_CKPT="$STAGE2/outputs/wit/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE2/outputs/$LANG/pytorch_model.bin"
 else
-  MAPPING_CKPT="$STAGE3/outputs/stage3b/pytorch_model.bin"
+  MAPPING_CKPT="$STAGE3/outputs/$LANG/pytorch_model.bin"
 fi
 
 if [ -d "$MT_PATH" ]; then
@@ -103,16 +105,14 @@ if [ ! -f "$MAPPING_CKPT" ]; then
 fi
 if [ ! -f "$EVAL_DATA" ]; then
   echo "ERROR: Eval data not found: $EVAL_DATA"
-  echo "       Run: python Stage3/load_vqa_evaluation.py --benchmark $BENCHMARK --languages $LANG"
+  echo "       Run: python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG"
   exit 1
 fi
 if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then
   echo "ERROR: GQA images directory not found: $GQA_IMAGES_DIR"
-  echo "       Download+extract https://nlp.stanford.edu/data/gqa/images.zip there."
   exit 1
 fi
 
-# Build optional args.
 EXTRA_ARGS="--local-files-only"
 if [ -n "$MAX_EXAMPLES" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --max-examples $MAX_EXAMPLES"
@@ -124,7 +124,7 @@ fi
 echo "=== Start $CHECKPOINT_STAGE VQA evaluation: $BENCHMARK/$LANG ==="
 cd "$PROJECT_ROOT"
 # shellcheck disable=SC2086
-python -u Stage3/evaluate_vqa.py \
+python -u Stage3/evaluate.py \
   --benchmark    "$BENCHMARK" \
   --lang         "$LANG" \
   --eval-data    "$EVAL_DATA" \

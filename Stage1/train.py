@@ -7,7 +7,6 @@ import ast
 import json
 import logging
 import os
-from datetime import datetime
 
 import deepspeed
 import torch
@@ -28,31 +27,27 @@ try:
 except ImportError:
     wandb = None
 
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage1")
+
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
-def setup_logging(log_dir: str) -> logging.Logger:
-    """Create a logger that writes to stdout and a timestamped file in *log_dir*.
+def setup_logging() -> logging.Logger:
+    """Create a logger that writes to stdout.
 
-    Args:
-        log_dir: Directory in which to create the log file (created if absent).
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
 
     Returns:
         A configured :class:`logging.Logger` instance.
     """
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"training_{timestamp}.log")
-
     logger = logging.getLogger("stage1_training")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-
-    fh = logging.FileHandler(log_path, encoding="utf-8")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
 
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
@@ -221,7 +216,7 @@ def main(args, logger: logging.Logger) -> None:
         # callers that don't pass --output_dir keep the original nested layout.
         output_model_path_base = args.output_dir.rstrip("/") + "/"
     else:
-        output_model_path_base = f"./outputs/{save_name}/{task}/{stage_name}/"
+        output_model_path_base = f"{SCRATCH_ROOT}/outputs/{save_name}/{task}/{stage_name}/"
 
     languages: list[str]
     if stage_name == "mapping":
@@ -314,7 +309,7 @@ def main(args, logger: logging.Logger) -> None:
         })
 
     if stage_name != "mapping" and args.init_checkpoint is None:
-        args.init_checkpoint = f"./outputs/{save_name}/{task}/mapping/pytorch_model.bin"
+        args.init_checkpoint = f"{SCRATCH_ROOT}/outputs/{save_name}/{task}/mapping/pytorch_model.bin"
 
     model = MindMerger(
         mt_path, llm_path, max_gen_len,
@@ -452,9 +447,9 @@ if __name__ == "__main__":
     parser.add_argument("--save_name", type=str, default="MindMerger")
     parser.add_argument(
         "--output_dir", type=str, default=None,
-        help="Flat checkpoint directory override, e.g. Stage1/outputs/ru -- when given, "
-             "checkpoints go directly to <output_dir>/mapping/pytorch_model.bin instead of "
-             "the default ./outputs/{save_name}/{task}/{stage_name}/ nesting.",
+        help="Flat checkpoint directory override, e.g. $SCRATCH/M2-ALIGN/Stage1/outputs/ru -- when "
+             "given, checkpoints go directly to <output_dir>/mapping/pytorch_model.bin instead of "
+             f"the default {SCRATCH_ROOT}/outputs/{{save_name}}/{{task}}/{{stage_name}}/ nesting.",
     )
     parser.add_argument("--task", type=str, default="translation")
     parser.add_argument("--stage_name", type=str, default="mapping")
@@ -472,7 +467,7 @@ if __name__ == "__main__":
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augmentation", type=ast.literal_eval, default=False)
-    parser.add_argument("--nllb_data_dir", type=str, default="./data/nllb")
+    parser.add_argument("--nllb_data_dir", type=str, default=os.path.join(SCRATCH_ROOT, "data", "nllb"))
     parser.add_argument(
         "--nllb_languages", type=str, default="French",
         help="Comma-separated source languages for task nllb_corpus.",
@@ -489,7 +484,7 @@ if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     set_seed(args.seed)
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging()
 
     langs_map_nllb = {
         "Swahili": "swh_Latn",

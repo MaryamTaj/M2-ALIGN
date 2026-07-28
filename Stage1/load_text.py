@@ -16,6 +16,9 @@ from datetime import datetime
 
 from datasets import load_dataset
 
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage1")
+
 NLLB_ENGLISH = "eng_Latn"
 
 LANG_TO_NLLB = {
@@ -103,7 +106,7 @@ def download_language(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download NLLB sentence pairs.")
-    parser.add_argument("--output_dir", type=str, default="./data",
+    parser.add_argument("--output_dir", type=str, default=os.path.join(SCRATCH_ROOT, "data"),
                         help="Directory to write the output JSONL files.")
     parser.add_argument("--n_samples", type=int, default=100_000,
                         help="Number of sentence pairs to download per language (default: 100000).")
@@ -114,7 +117,7 @@ def main() -> None:
                         help="Stream from the Hub (default). Use --no-streaming for a full local cache.")
     args = parser.parse_args()
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
     os.makedirs(args.output_dir, exist_ok=True)
 
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]

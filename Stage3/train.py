@@ -1,7 +1,7 @@
 """Stage 3b VQA augmentation training for AugmentedVisualMindMerger.
 
 Trains the Mapping layer of :class:`AugmentedVisualMindMerger` on GQA-derived
-VQA data (see :mod:`load_vqa_data`) translated into Bengali (currently the
+VQA data (see :mod:`load_translated_data`) translated into Bengali (currently the
 sole active Stage 3 VQA language -- Indonesian/Javanese are deferred).
 Initialises directly from Stage 2's vision-mapping checkpoint (chained
 lineage: Stage 1 -> Stage 2 -> Stage 3 (VQA)) so the final checkpoint has
@@ -11,7 +11,7 @@ pipeline -- the code still exists in train_text.py if you want to run it
 separately, but this script no longer chains from it. NLLB encoder, vision
 tower, and LLM all stay frozen; only the Mapping is updated.
 
-Input JSONL fields (from load_vqa_data.py):
+Input JSONL fields (from load_translated_data.py):
     vg_image_id, query, answer, source_language, nllb_lang_tag
 
 Images are resolved from a local GQA images directory (download and
@@ -21,11 +21,11 @@ path via --images-dir); GQA/xGQA reference images by id
 
 Usage
 -----
-    python train_vqa.py \\
-        --data-dir ./data/stage3b \\
+    python train.py \\
+        --data-dir $SCRATCH/M2-ALIGN/Stage3/data/stage3b \\
         --images-dir /path/to/gqa/images \\
-        --output-dir ./outputs/stage3b \\
-        --init-mapping-ckpt ../Stage2/outputs/wit/pytorch_model.bin \\
+        --output-dir $SCRATCH/M2-ALIGN/Stage3/outputs/bn \\
+        --init-mapping-ckpt $SCRATCH/M2-ALIGN/Stage2/outputs/bn/pytorch_model.bin \\
         --mt-path facebook/nllb-200-3.3B \\
         --llm-path Qwen/Qwen3-VL-8B-Instruct
 """
@@ -38,7 +38,6 @@ import logging
 import math
 import os
 import random
-from datetime import datetime
 from functools import partial
 
 import torch
@@ -54,6 +53,8 @@ try:
 except ImportError:
     wandb = None
 
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
 
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
 
@@ -79,15 +80,16 @@ def _build_chat_messages(question: str) -> list[dict]:
 # Logging
 # ---------------------------------------------------------------------------
 
-def setup_logging(log_dir: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+def setup_logging() -> logging.Logger:
+    """Create a logger that writes to stdout.
+
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
+    """
     logger = logging.getLogger("stage3b_train_vqa")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    fh = logging.FileHandler(os.path.join(log_dir, f"train_vqa_{ts}.log"))
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     logger.addHandler(ch)
@@ -118,7 +120,7 @@ class VQADataset(Dataset):
     """Loads GQA-translated VQA JSONL rows and resolves images locally.
 
     Args:
-        rows: List of dicts from :mod:`load_vqa_data`'s output JSONL.
+        rows: List of dicts from :mod:`load_translated_data`'s output JSONL.
         images_dir: Local directory of extracted GQA images, named
             ``{vg_image_id}.jpg`` (see module docstring).
     """
@@ -484,7 +486,7 @@ def main(args, logger: logging.Logger) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 3b: train the VQA-augmented mapping layer.")
     parser.add_argument("--data-dir", type=str, required=True,
-                        help="Directory containing GQA-translated *.jsonl files from load_vqa_data.py, "
+                        help="Directory containing GQA-translated *.jsonl files from load_translated_data.py, "
                              "or a path to a single .jsonl file directly.")
     parser.add_argument("--images-dir", type=str, required=True,
                         help="Local GQA images directory (extract https://nlp.stanford.edu/data/gqa/images.zip).")
@@ -519,5 +521,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging()
     main(args, logger)

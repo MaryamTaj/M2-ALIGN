@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage3b_load_vqa_lang
+#SBATCH --job-name=stage3b_load_translated_data
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage3/logs/stage3b_load_vqa_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Stage3/logs/stage3b_load_translated_data_%x_%j.log
 
 # Per-language Stage 3b VQA training data: GQA (English) -> NLLB-3.3B
 # translation into one target language at a time. Writes a single flat file
@@ -17,7 +17,7 @@
 # Stage3/data/stage3b.
 #
 # Reads the pre-sampled GQA rows from Stage3/data/english.jsonl (produced
-# offline by Stage3/dump_gqa_sample.py on a workstation and Globus-
+# offline by Stage3/load_base_data.py on a workstation and Globus-
 # transferred here -- see the README) instead of calling load_dataset()
 # itself, so this job makes NO network calls at all, not even to the
 # pre-warmed HF cache. That JSONL is sampled once with a fixed seed and is
@@ -31,16 +31,16 @@
 # The NLLB-200-3.3B model weights are assumed already downloaded at NLLB_MODEL.
 #
 # Usage:
-#   LANG=ru sbatch --job-name=stage3b_load_vqa_ru load_vqa_data_lang.sh
-#   LANG=de sbatch --job-name=stage3b_load_vqa_de load_vqa_data_lang.sh
-#   LANG=zh sbatch --job-name=stage3b_load_vqa_zh load_vqa_data_lang.sh
-#   LANG=pt sbatch --job-name=stage3b_load_vqa_pt load_vqa_data_lang.sh
-#   LANG=id sbatch --job-name=stage3b_load_vqa_id load_vqa_data_lang.sh
-#   LANG=ko sbatch --job-name=stage3b_load_vqa_ko load_vqa_data_lang.sh
-#   LANG=jv sbatch --job-name=stage3b_load_vqa_jv load_vqa_data_lang.sh
-#   LANG=mn sbatch --job-name=stage3b_load_vqa_mn load_vqa_data_lang.sh
-#   LANG=si sbatch --job-name=stage3b_load_vqa_si load_vqa_data_lang.sh
-#   LANG=ga sbatch --job-name=stage3b_load_vqa_ga load_vqa_data_lang.sh
+#   LANG=ru sbatch --job-name=stage3b_load_translated_data_ru load_translated_data.sh
+#   LANG=de sbatch --job-name=stage3b_load_translated_data_de load_translated_data.sh
+#   LANG=zh sbatch --job-name=stage3b_load_translated_data_zh load_translated_data.sh
+#   LANG=pt sbatch --job-name=stage3b_load_translated_data_pt load_translated_data.sh
+#   LANG=id sbatch --job-name=stage3b_load_translated_data_id load_translated_data.sh
+#   LANG=ko sbatch --job-name=stage3b_load_translated_data_ko load_translated_data.sh
+#   LANG=jv sbatch --job-name=stage3b_load_translated_data_jv load_translated_data.sh
+#   LANG=mn sbatch --job-name=stage3b_load_translated_data_mn load_translated_data.sh
+#   LANG=si sbatch --job-name=stage3b_load_translated_data_si load_translated_data.sh
+#   LANG=ga sbatch --job-name=stage3b_load_translated_data_ga load_translated_data.sh
 
 set -euo pipefail
 
@@ -57,8 +57,11 @@ if [ -z "$LANG_NAME" ]; then
 fi
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN"
 NLLB_MODEL="$HOME/.cache/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/1a07f7d195896b2114afcb79b7b57ab512e7b43e"
-DATA_DIR="$PROJECT_ROOT/Stage3/data"
+DATA_DIR="$DATA_ROOT/Stage3/data"
 OUT_FILE="$DATA_DIR/$LANG.jsonl"
 GQA_JSONL="$DATA_DIR/english.jsonl"
 
@@ -100,14 +103,14 @@ if [ ! -d "$NLLB_MODEL" ]; then
 fi
 if [ ! -f "$GQA_JSONL" ]; then
   echo "ERROR: Pre-sampled GQA file not found: $GQA_JSONL"
-  echo "       Run Stage3/dump_gqa_sample.py on a workstation and Globus-transfer it here."
+  echo "       Run Stage3/load_base_data.py on a workstation and Globus-transfer it here."
   exit 1
 fi
 
 cd "$PROJECT_ROOT"
 
 echo "=== GQA -> NLLB translation ($LANG_NAME) ==="
-python -u Stage3/load_vqa_data.py \
+python -u Stage3/load_translated_data.py \
   --languages   "$LANG_NAME" \
   --gqa_jsonl   "$GQA_JSONL" \
   --output_dir  "$DATA_DIR" \
@@ -115,7 +118,7 @@ python -u Stage3/load_vqa_data.py \
   --batch_size  32 \
   --num_beams   4
 
-# load_vqa_data.py writes <output_dir>/<lang name, lowercased>.jsonl (e.g.
+# load_translated_data.py writes <output_dir>/<lang name, lowercased>.jsonl (e.g.
 # Stage3/data/russian.jsonl) -- rename to the flat $LANG.jsonl convention.
 WRITTEN_FILE="$DATA_DIR/$(echo "$LANG_NAME" | tr '[:upper:]' '[:lower:]').jsonl"
 if [ -e "$WRITTEN_FILE" ]; then

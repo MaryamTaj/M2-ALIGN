@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=stage1_train_lang
+#SBATCH --job-name=stage1_train
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,28 +9,28 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Stage1/logs/stage1_train_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Stage1/logs/stage1_train_%x_%j.log
 
 # Per-language Stage 1 training -- one independent checkpoint per language,
 # so ru/de/zh (or any future addition) can be submitted and run in parallel
 # instead of serially through one shared checkpoint. Bengali has been
-# migrated onto this same per-language layout (Stage1/outputs/bn/); the old
-# Stage1/outputs/M2-ALIGN/ checkpoint is no longer read by anything.
+# migrated onto this same per-language layout ($SCRATCH/M2-ALIGN/Stage1/outputs/bn/);
+# the old outputs/M2-ALIGN/ checkpoint is no longer read by anything.
 #
 # Usage:
-#   LANG=bn sbatch --job-name=stage1_train_bn train_lang.sh
-#   LANG=ru sbatch --job-name=stage1_train_ru train_lang.sh
-#   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
-#   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
-#   LANG=pt sbatch --job-name=stage1_train_pt train_lang.sh
-#   LANG=id sbatch --job-name=stage1_train_id train_lang.sh
-#   LANG=ko sbatch --job-name=stage1_train_ko train_lang.sh
-#   LANG=jv sbatch --job-name=stage1_train_jv train_lang.sh
-#   LANG=mn sbatch --job-name=stage1_train_mn train_lang.sh
-#   LANG=si sbatch --job-name=stage1_train_si train_lang.sh
-#   LANG=ga sbatch --job-name=stage1_train_ga train_lang.sh
+#   LANG=bn sbatch --job-name=stage1_train_bn train.sh
+#   LANG=ru sbatch --job-name=stage1_train_ru train.sh
+#   LANG=de sbatch --job-name=stage1_train_de train.sh
+#   LANG=zh sbatch --job-name=stage1_train_zh train.sh
+#   LANG=pt sbatch --job-name=stage1_train_pt train.sh
+#   LANG=id sbatch --job-name=stage1_train_id train.sh
+#   LANG=ko sbatch --job-name=stage1_train_ko train.sh
+#   LANG=jv sbatch --job-name=stage1_train_jv train.sh
+#   LANG=mn sbatch --job-name=stage1_train_mn train.sh
+#   LANG=si sbatch --job-name=stage1_train_si train.sh
+#   LANG=ga sbatch --job-name=stage1_train_ga train.sh
 #
-# Saves to Stage1/outputs/$LANG/pytorch_model.bin
+# Saves to $SCRATCH/M2-ALIGN/Stage1/outputs/$LANG/pytorch_model.bin
 
 set -euo pipefail
 
@@ -50,6 +50,9 @@ fi
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN/Stage1"
 
 if [ -d "$MT_PATH" ]; then
   for d in "$MT_PATH"/*; do
@@ -102,9 +105,9 @@ if [ ! -d "$MT_PATH" ]; then
   echo "ERROR: MT snapshot path not found: $MT_PATH"
   exit 1
 fi
-if [ ! -f "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1/data/${LANG_NAME}_to_English.jsonl" ]; then
-  echo "ERROR: Stage 1 data not found: Stage1/data/${LANG_NAME}_to_English.jsonl"
-  echo "       Run: python Stage1/load_text.py --languages $LANG_NAME --output_dir Stage1/data --n_samples 100000"
+if [ ! -f "$DATA_ROOT/data/${LANG_NAME}_to_English.jsonl" ]; then
+  echo "ERROR: Stage 1 data not found: $DATA_ROOT/data/${LANG_NAME}_to_English.jsonl"
+  echo "       Run: python Stage1/load_text.py --languages $LANG_NAME --output_dir $DATA_ROOT/data --n_samples 100000"
   exit 1
 fi
 
@@ -130,11 +133,11 @@ deepspeed --master_port "${PORTS[$LANG]}" train.py --deepspeed \
   --llm_path "$LLM_PATH" \
   --mt_path "$MT_PATH" \
   --save_name "M2-ALIGN-$LANG" \
-  --output_dir "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1/outputs/$LANG" \
+  --output_dir "$DATA_ROOT/outputs/$LANG" \
   --stage_name mapping \
   --task nllb_corpus \
   --augmentation False \
-  --nllb_data_dir ./data \
+  --nllb_data_dir "$DATA_ROOT/data" \
   --nllb_languages "$LANG_NAME" \
   --train_num 100000 \
   --val_size 3000 \

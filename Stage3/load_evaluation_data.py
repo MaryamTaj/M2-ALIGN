@@ -19,7 +19,7 @@ interchangeable:
     jv         CVQA (+ WorldCuisines, deferred) -- no xGQA coverage
     mn, si, ga CVQA only -- no xGQA or WorldCuisines coverage
 
-CVQA is scored open-ended-via-likelihood -- see evaluate_vqa.py -- not as
+CVQA is scored open-ended-via-likelihood -- see evaluate.py -- not as
 visible-choice multiple-choice, per the CVQA paper's own open-ended
 protocol. Yoruba is dropped: no xGQA/CVQA/WorldCuisines coverage at all.
 WorldCuisines is otherwise deferred even where it has coverage (id/jv) --
@@ -58,21 +58,20 @@ CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
 
 Usage
 -----
-    # Run from anywhere -- output_dir defaults to Stage3/data/stage3b_eval,
-    # resolved relative to this script's own location, not the cwd:
-    python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko
+    # Run from anywhere -- output_dir defaults to $SCRATCH/M2-ALIGN/Stage3/data/stage3b_eval:
+    python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko
 
     # bn/ru/zh/pt/id/ko all have BOTH xGQA and CVQA coverage -- run both,
     # they're independent evaluations, not redundant (zh here is
     # mainland/China only, not the separate Singapore subset CVQA also has):
-    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko
+    python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko
 
     # jv/mn/si/ga: CVQA only -- no xGQA coverage for any of these four.
-    python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages jv,mn,si,ga
+    python Stage3/load_evaluation_data.py --benchmark cvqa --languages jv,mn,si,ga
 
     # Deferred (Indonesian/Javanese via worldcuisines) -- kept working for
     # later, not run today; CVQA coverage for id/jv is active above:
-    python Stage3/load_vqa_evaluation.py --benchmark worldcuisines --languages id,jv
+    python Stage3/load_evaluation_data.py --benchmark worldcuisines --languages id,jv
 """
 from __future__ import annotations
 
@@ -84,6 +83,9 @@ from datetime import datetime
 
 import requests
 from datasets import load_dataset
+
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
 
 XGQA_RAW_BASE = "https://raw.githubusercontent.com/adapter-hub/xGQA/master/data/zero_shot"
 # All 8 of xGQA's languages that this project has a Stage 1/2 checkpoint
@@ -134,10 +136,10 @@ CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
 def setup_logging(log_dir: str) -> logging.Logger:
     os.makedirs(log_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    logger = logging.getLogger("stage3b_load_vqa_eval")
+    logger = logging.getLogger("stage3b_load_evaluation_data")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    fh = logging.FileHandler(os.path.join(log_dir, f"load_vqa_eval_{ts}.log"))
+    fh = logging.FileHandler(os.path.join(log_dir, f"load_evaluation_data_{ts}.log"))
     fh.setFormatter(fmt)
     logger.addHandler(fh)
     ch = logging.StreamHandler()
@@ -309,7 +311,7 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
         the untranslated question feeds both the NLLB encoder and the LLM
         prompt `T`. ``choices`` intentionally keeps preferring the English
         ``"Translated Options"``, matching the project-wide convention that
-        answers stay in English (see Stage3/load_vqa_data.py's docstring).
+        answers stay in English (see Stage3/load_translated_data.py's docstring).
     """
     if lang not in CVQA_SUBSET_CANDIDATES:
         raise ValueError(f"No CVQA coverage configured for {lang!r}")
@@ -353,19 +355,17 @@ def main() -> None:
                         help="Comma-separated ISO codes, e.g. 'bn,id' for xgqa or 'id,jv' for worldcuisines/cvqa.")
     parser.add_argument(
         "--output_dir", type=str, default=None,
-        help="Defaults to Stage3/data/stage3b_eval (resolved relative to this "
-             "script's location, not the current working directory).",
+        help="Defaults to $SCRATCH/M2-ALIGN/Stage3/data/stage3b_eval.",
     )
     parser.add_argument("--worldcuisines-split", type=str, default="test_small",
                         choices=["test_small", "test_large"])
     parser.add_argument("--worldcuisines-task", type=str, default="task1", choices=["task1", "task2"])
     args = parser.parse_args()
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
     if args.output_dir is None:
-        args.output_dir = os.path.join(script_dir, "data", "stage3b_eval")
+        args.output_dir = os.path.join(SCRATCH_ROOT, "data", "stage3b_eval")
 
-    logger = setup_logging(os.path.join(script_dir, "logs"))
+    logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
 
     for lang in langs:

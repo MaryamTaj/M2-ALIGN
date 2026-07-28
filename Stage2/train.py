@@ -14,12 +14,12 @@ nodes on some clusters (e.g. Narval) have no internet access.
 Usage
 -----
     python train.py \\
-        --data-path ./data/wit_pairs.jsonl \\
-        --output-dir ./outputs/wit \\
-        --stage1-mapping-ckpt ../Stage1/outputs/.../pytorch_model.bin \\
+        --data-path $SCRATCH/M2-ALIGN/Stage2/data/bn/wit_pairs.jsonl \\
+        --output-dir $SCRATCH/M2-ALIGN/Stage2/outputs/bn \\
+        --stage1-mapping-ckpt $SCRATCH/M2-ALIGN/Stage1/outputs/bn/pytorch_model.bin \\
         --mt-path facebook/nllb-200-distilled-600M \\
         --llm-path Qwen/Qwen3-VL-8B-Instruct \\
-        --image-cache-dir ./data/image_cache
+        --image-cache-dir $SCRATCH/M2-ALIGN/Stage2/data/bn/image_cache
 """
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ import logging
 import math
 import os
 import random
-from datetime import datetime
 from functools import partial
 
 import torch
@@ -46,20 +45,24 @@ try:
 except ImportError:
     wandb = None
 
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage2")
+
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
-def setup_logging(log_dir: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+def setup_logging() -> logging.Logger:
+    """Create a logger that writes to stdout.
+
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
+    """
     logger = logging.getLogger("wit_train")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    fh = logging.FileHandler(os.path.join(log_dir, f"train_wit_{ts}.log"))
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     logger.addHandler(ch)
@@ -568,7 +571,7 @@ if __name__ == "__main__":
                         help="Stage 1 mapping checkpoint to warm-start from.")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-distilled-600M")
     parser.add_argument("--llm-path", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--image-cache-dir", type=str, default="./data/image_cache")
+    parser.add_argument("--image-cache-dir", type=str, default=os.path.join(SCRATCH_ROOT, "data", "image_cache"))
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--epochs", type=int, default=3)
@@ -606,5 +609,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging()
     main(args, logger)

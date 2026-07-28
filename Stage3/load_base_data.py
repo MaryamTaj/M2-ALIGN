@@ -1,9 +1,9 @@
 """Sample GQA's balanced train split to a portable JSONL, with no GPU/torch
 dependency -- meant to run on a workstation with internet access, not on
-Narval (see Stage3/load_vqa_data.py, which needs this file's output rather
+Narval (see Stage3/load_translated_data.py, which needs this file's output rather
 than calling `load_dataset` itself).
 
-Why: `load_vqa_data.py --gqa-jsonl` used to rely on the Narval login node
+Why: `load_translated_data.py --gqa-jsonl` used to rely on the Narval login node
 pre-warming `lmms-lab/GQA`'s raw HuggingFace `datasets` cache, then reading
 it back with HF_HUB_OFFLINE=1 on a compute node. That's the same
 unversioned/unreadable-Arrow-cache problem `load_text_evaluation.py`'s
@@ -11,14 +11,14 @@ docstring already flags for a different dataset, and it still meant a
 `load_dataset()` network call on the login node. Sampling here instead and
 writing plain JSONL removes that dependency entirely: the sample is
 deterministic in (n_samples, seed) and independent of target language (see
-`sample_gqa` in load_vqa_data.py), so it only needs to be produced once and
+`sample_gqa` in load_translated_data.py), so it only needs to be produced once and
 Globus-transferred over, no matter how many languages read it afterward.
 
 Output JSONL fields per row: question, answer, vg_image_id
 
 Usage
 -----
-    python Stage3/dump_gqa_sample.py --n_samples 30000 --seed 42 \\
+    python Stage3/load_base_data.py --n_samples 30000 --seed 42 \\
         --output ./gqa_raw_sample.jsonl
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ GQA_CONFIG = "train_balanced_instructions"
 GQA_SPLIT = "train"
 
 # Cap on questions drawn from any single image so the sample isn't dominated
-# by a handful of heavily-annotated images (mirrors load_vqa_data.py).
+# by a handful of heavily-annotated images (mirrors load_translated_data.py).
 MAX_QUESTIONS_PER_IMAGE = 4
 
 
@@ -69,7 +69,7 @@ def _row_answer(row: dict) -> str | None:
 
 
 def sample_gqa(n_samples: int, seed: int) -> list[dict]:
-    """Identical sampling logic to load_vqa_data.py's sample_gqa -- keep in
+    """Identical sampling logic to load_translated_data.py's sample_gqa -- keep in
     sync if either changes, so a JSONL produced here matches what an
     in-process call on Narval would have sampled."""
     print(f"Loading {GQA_HF_ID} [{GQA_CONFIG}/{GQA_SPLIT}] ...")

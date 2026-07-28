@@ -16,7 +16,7 @@ possible short of training on the eval set itself.
 Answers are kept in English (short, mostly single tokens) -- a
 language-agnostic, easily-gradable shape. Only the question is
 translated; images are resolved lazily by
-`Stage3/train_vqa.py`, not downloaded here (same design as
+`Stage3/train.py`, not downloaded here (same design as
 `Stage2/load_wit_data.py`, which stores `image_url` rather than bytes).
 
 Output JSONL fields per row:
@@ -25,8 +25,8 @@ Output JSONL fields per row:
 
 Usage
 -----
-    python load_vqa_data.py --languages Bengali \\
-        --n_samples 30000 --output_dir ./data/stage3b
+    python load_translated_data.py --languages Bengali \\
+        --n_samples 30000 --output_dir $SCRATCH/M2-ALIGN/Stage3/data/stage3b
 """
 from __future__ import annotations
 
@@ -36,12 +36,14 @@ import logging
 import os
 import random
 from collections import defaultdict
-from datetime import datetime
 
 import torch
 from datasets import load_dataset
 
 from load_text_data import load_nllb, stable_id, write_jsonl
+
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
 
 # Stage 3b VQA-track language (must already be backfilled into Stage 1's
 # NLLB corpus and Stage 2's WIT config -- see the Stage 3 plan).
@@ -73,16 +75,16 @@ GQA_CONFIG = "train_balanced_instructions"
 GQA_SPLIT = "train"
 
 
-def setup_logging(log_dir: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(log_dir, f"load_vqa_data_{timestamp}.log")
-    logger = logging.getLogger("stage3b_load_vqa_data")
+def setup_logging() -> logging.Logger:
+    """Create a logger that writes to stdout.
+
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
+    """
+    logger = logging.getLogger("stage3b_load_translated_data")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(log_path, encoding="utf-8")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     logger.addHandler(ch)
@@ -242,7 +244,7 @@ def main() -> None:
     parser.add_argument("--n_samples", type=int, default=DEFAULT_N_SAMPLES,
                         help="Target GQA questions sampled before translation (shared across languages). "
                              "Ignored if --gqa_jsonl is given.")
-    parser.add_argument("--output_dir", type=str, default="./data/stage3b")
+    parser.add_argument("--output_dir", type=str, default=os.path.join(SCRATCH_ROOT, "data", "stage3b"))
     parser.add_argument("--seed", type=int, default=42,
                         help="Ignored if --gqa_jsonl is given (the JSONL was already sampled with its own seed).")
     parser.add_argument("--nllb_model", type=str, default="facebook/nllb-200-3.3B")
@@ -251,13 +253,13 @@ def main() -> None:
     parser.add_argument(
         "--gqa_jsonl", type=str, default=None,
         help="Path to a JSONL of {question, answer, vg_image_id} rows produced offline by "
-             "Stage3/dump_gqa_sample.py (run on a login-node-free workstation, then Globus-transferred "
+             "Stage3/load_base_data.py (run on a login-node-free workstation, then Globus-transferred "
              "here). When given, this script never calls load_dataset() itself -- no network access "
              "needed on Narval for this step at all.",
     )
     args = parser.parse_args()
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
+    logger = setup_logging()
 
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
     for lang in langs:

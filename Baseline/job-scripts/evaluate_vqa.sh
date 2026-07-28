@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/home/tajm/projects/def-annielee/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_vqa_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_vqa_%x_%j.log
 
 # Raw Qwen3-VL VQA baseline -- no NLLB encoder, no Mapping layer. This is
 # the "does the base model already do this" reference point, parallel to
@@ -28,9 +28,13 @@ LANG="${LANG:-bn}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
+
+# Data/outputs/logs live on $SCRATCH; the git checkout under $HOME only holds code.
+DATA_ROOT="$SCRATCH/M2-ALIGN"
+
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
-GQA_IMAGES_DIR="$PROJECT_ROOT/Stage3/data/gqa/images"
-EVAL_DATA="$PROJECT_ROOT/Stage3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
+GQA_IMAGES_DIR="$DATA_ROOT/Stage3/data/gqa/images"
+EVAL_DATA="$DATA_ROOT/Stage3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
 
 echo "=== Job info ==="
 date
@@ -71,7 +75,7 @@ if [ ! -d "$LLM_PATH" ]; then
 fi
 if [ ! -f "$EVAL_DATA" ]; then
   echo "ERROR: Eval data not found: $EVAL_DATA"
-  echo "       Run: python Stage3/load_vqa_evaluation.py --benchmark $BENCHMARK --languages $LANG"
+  echo "       Run: python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG"
   exit 1
 fi
 if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then

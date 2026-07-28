@@ -9,7 +9,7 @@ this against Stage 2 (vision-mapping only, zero-shot) and the final
 Stage 3b checkpoint answers: does the mapping help at all beyond what
 Qwen3-VL can already do zero-shot in these languages?
 
-Supported benchmarks (same real/non-synthetic sources as Stage3/evaluate_vqa.py)
+Supported benchmarks (same real/non-synthetic sources as Stage3/evaluate.py)
 --------------------------------------------------------------------------------
 Policy: wherever a language has coverage in more than one benchmark below,
 run all of them -- they're independent evaluations, not interchangeable.
@@ -20,7 +20,7 @@ worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
                   deferred; no African-language coverage)
 cvqa           -- multiple-choice dataset, scored **open-ended via
                   answer-choice log-likelihood** -- must match
-                  Stage3/evaluate_vqa.py's `evaluate_cvqa_open_ended`
+                  Stage3/evaluate.py's `evaluate_cvqa_open_ended`
                   exactly so Baseline/Stage2/Stage3 are comparable. Active
                   languages: am/ig/om/mn/si/ga, plus bn/ru/zh/pt/id/ko
                   (also run through xGQA, per the policy note). No German
@@ -35,7 +35,6 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
 
 import requests
 import torch
@@ -45,30 +44,34 @@ from tqdm import tqdm
 
 MODEL_ID = "Qwen/Qwen3-VL-8B-Instruct"
 
+# Data/outputs/logs live on $SCRATCH, not in the git checkout.
+SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Baseline")
+
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
 
 
 def build_open_ended_prompt(question: str) -> str:
-    """Must match Stage3/evaluate_vqa.py's `build_open_ended_prompt` exactly."""
+    """Must match Stage3/evaluate.py's `build_open_ended_prompt` exactly."""
     return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
 def build_cvqa_open_ended_prompt(question: str) -> str:
-    """Must match Stage3/evaluate_vqa.py's `build_cvqa_open_ended_prompt` exactly."""
+    """Must match Stage3/evaluate.py's `build_cvqa_open_ended_prompt` exactly."""
     return f"Question: {question}"
 
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 
-def setup_logging(log_dir: str, benchmark: str) -> logging.Logger:
-    os.makedirs(log_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+def setup_logging(benchmark: str) -> logging.Logger:
+    """Create a logger that writes to stdout.
+
+    The job script's SLURM ``--output`` file is the single log file for a
+    run, so this only needs to format stdout consistently -- it must not
+    also write its own file, or every run ends up with two logs.
+    """
     logger = logging.getLogger(f"baseline_eval_vqa_{benchmark}")
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(os.path.join(log_dir, f"baseline_eval_vqa_{benchmark}_{ts}.log"))
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     logger.addHandler(ch)
@@ -93,7 +96,7 @@ def load_model(
     return model, processor, device
 
 
-# ─── Image resolution (same conventions as Stage3/evaluate_vqa.py) ─────────
+# ─── Image resolution (same conventions as Stage3/evaluate.py) ─────────
 
 def load_image_by_id(images_dir: str, image_id: str) -> Image.Image | None:
     for ext in (".jpg", ".jpeg", ".png"):
@@ -168,7 +171,7 @@ def score_choice_loglikelihood(
     device: torch.device,
 ) -> float:
     """Length-normalized log-likelihood of *choice_text* as a continuation of
-    *prompt*. Must match Stage3/evaluate_vqa.py's `score_choice_loglikelihood`
+    *prompt*. Must match Stage3/evaluate.py's `score_choice_loglikelihood`
     (same protocol, applied to the raw model instead of the custom mapping
     pipeline): one forward pass per candidate choice, no generation."""
     messages = [
@@ -203,7 +206,7 @@ def score_choice_loglikelihood(
     return (token_logprobs.sum() / n_choice_tok).item()
 
 
-# ─── Scoring (identical to Stage3/evaluate_vqa.py) ─────────────────────────
+# ─── Scoring (identical to Stage3/evaluate.py) ─────────────────────────
 
 def normalize_answer(text: str) -> str:
     text = text.lower().strip()
@@ -291,9 +294,9 @@ def main() -> None:
     parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
     parser.add_argument("--lang", required=True,
                          help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
-    parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_vqa_evaluation.py.")
+    parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
-    parser.add_argument("--image-cache-dir", default="./data/stage3b_eval/image_cache",
+    parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "stage3b_eval", "image_cache"),
                         help="URL image cache dir (used for worldcuisines/cvqa).")
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--local-files-only", action="store_true")
@@ -304,7 +307,7 @@ def main() -> None:
     if args.benchmark == "xgqa" and not args.images_dir:
         parser.error("--images-dir is required for --benchmark xgqa")
 
-    logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"), args.benchmark)
+    logger = setup_logging(args.benchmark)
     max_examples = 5 if args.smoke else args.max_examples
 
     rows = _read_jsonl(args.eval_data)
