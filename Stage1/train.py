@@ -470,6 +470,7 @@ if __name__ == "__main__":
     parser.add_argument("--init_checkpoint", type=str, default=None)
     parser.add_argument("--gpu", type=str, default="0")
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--augmentation", type=ast.literal_eval, default=False)
     parser.add_argument("--nllb_data_dir", type=str, default="./data/nllb")
     parser.add_argument(
@@ -486,7 +487,7 @@ if __name__ == "__main__":
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    set_seed(0)
+    set_seed(args.seed)
 
     logger = setup_logging(os.path.join(os.path.dirname(__file__), "logs"))
 
