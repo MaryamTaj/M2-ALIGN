@@ -45,6 +45,7 @@
 set -euo pipefail
 
 declare -A LANG_NAMES=(
+  [bn]="Bengali"
   [ru]="Russian" [de]="German" [zh]="Chinese"
   [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
   [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
