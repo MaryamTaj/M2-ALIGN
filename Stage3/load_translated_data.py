@@ -2,8 +2,9 @@
 
 Mirrors MindMerger's own augmentation-training recipe (translate an
 established English task corpus into each target language, keep the
-answer untranslated) and reuses Stage 3a's translation infrastructure
-(`load_text_data.py`'s `load_nllb`/`translate_batch`).
+answer untranslated). `load_nllb`/`stable_id`/`write_jsonl` below were
+originally shared with Stage 3a's now-removed `load_text_data.py`; they're
+inlined here rather than reimported since that module no longer exists.
 
 Why GQA rather than a from-scratch VQA corpus: `xGQA` (the Bengali
 evaluation benchmark used in Stage 3b) is itself a
@@ -31,6 +32,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -39,8 +41,7 @@ from collections import defaultdict
 
 import torch
 from datasets import load_dataset
-
-from load_text_data import load_nllb, stable_id, write_jsonl
+from transformers import AutoModelForSeq2SeqLM, NllbTokenizer
 
 # Data/outputs/logs live on $SCRATCH, not in the git checkout.
 SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
@@ -89,6 +90,30 @@ def setup_logging() -> logging.Logger:
     ch.setFormatter(fmt)
     logger.addHandler(ch)
     return logger
+
+
+def stable_id(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def write_jsonl(path: str, rows: list[dict], logger: logging.Logger) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    logger.info("Wrote %d rows -> %s", len(rows), path)
+
+
+def load_nllb(nllb_model: str, logger: logging.Logger):
+    """Load NLLB-200-3.3B tokenizer and model."""
+    logger.info("Loading NLLB tokenizer and model from: %s", nllb_model)
+    tokenizer = NllbTokenizer.from_pretrained(nllb_model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float16 if device.type == "cuda" else torch.float32
+    model = AutoModelForSeq2SeqLM.from_pretrained(nllb_model, torch_dtype=dtype).to(device)
+    model.eval()
+    logger.info("NLLB loaded on %s.", device)
+    return tokenizer, model, device
 
 
 def _row_image_id(row: dict) -> str | None:
