@@ -34,7 +34,7 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 GQA_IMAGES_DIR="$DATA_ROOT/Stage3/data/gqa/images"
-EVAL_DATA="$DATA_ROOT/Stage3/data/stage3b_eval/$BENCHMARK/$LANG.jsonl"
+EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl"
 
 echo "=== Job info ==="
 date

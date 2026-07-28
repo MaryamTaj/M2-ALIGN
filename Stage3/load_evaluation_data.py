@@ -58,7 +58,7 @@ CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
 
 Usage
 -----
-    # Run from anywhere -- output_dir defaults to $SCRATCH/M2-ALIGN/Stage3/data/stage3b_eval:
+    # Run from anywhere -- output_dir defaults to $SCRATCH/M2-ALIGN/Stage3/data:
     python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko
 
     # bn/ru/zh/pt/id/ko all have BOTH xGQA and CVQA coverage -- run both,
@@ -355,7 +355,7 @@ def main() -> None:
                         help="Comma-separated ISO codes, e.g. 'bn,id' for xgqa or 'id,jv' for worldcuisines/cvqa.")
     parser.add_argument(
         "--output_dir", type=str, default=None,
-        help="Defaults to $SCRATCH/M2-ALIGN/Stage3/data/stage3b_eval.",
+        help="Defaults to $SCRATCH/M2-ALIGN/Stage3/data.",
     )
     parser.add_argument("--worldcuisines-split", type=str, default="test_small",
                         choices=["test_small", "test_large"])
@@ -363,7 +363,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.output_dir is None:
-        args.output_dir = os.path.join(SCRATCH_ROOT, "data", "stage3b_eval")
+        args.output_dir = os.path.join(SCRATCH_ROOT, "data")
 
     logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]

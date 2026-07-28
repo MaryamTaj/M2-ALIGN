@@ -99,10 +99,10 @@ LANG=mn sbatch --job-name=stage2_train_mn Stage2/job-scripts/train.sh
 LANG=si sbatch --job-name=stage2_train_si Stage2/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage2_train_ga Stage2/job-scripts/train.sh
 
-# (ON WORKSTATION ONLY)####################################################
-# No new GQA sampling: $SCRATCH/M2-ALIGN/Stage3/data/english.jsonl (from load_base_data.py,
-# already produced for the ru/de/zh round) is the same sampled GQA English
-# regardless of target language -- reused as-is.
+LANG=bn sbatch --job-name=stage3b_load_vqa_bn Stage3/job-scripts/load_translated_data.sh
+LANG=ru sbatch --job-name=stage3b_load_vqa_ru Stage3/job-scripts/load_translated_data.sh
+LANG=de sbatch --job-name=stage3b_load_vqa_de Stage3/job-scripts/load_translated_data.sh
+LANG=zh sbatch --job-name=stage3b_load_vqa_zh Stage3/job-scripts/load_translated_data.sh
 LANG=pt sbatch --job-name=stage3b_load_vqa_pt Stage3/job-scripts/load_translated_data.sh
 LANG=id sbatch --job-name=stage3b_load_vqa_id Stage3/job-scripts/load_translated_data.sh
 LANG=ko sbatch --job-name=stage3b_load_vqa_ko Stage3/job-scripts/load_translated_data.sh
@@ -110,6 +110,7 @@ LANG=jv sbatch --job-name=stage3b_load_vqa_jv Stage3/job-scripts/load_translated
 LANG=mn sbatch --job-name=stage3b_load_vqa_mn Stage3/job-scripts/load_translated_data.sh
 LANG=si sbatch --job-name=stage3b_load_vqa_si Stage3/job-scripts/load_translated_data.sh
 LANG=ga sbatch --job-name=stage3b_load_vqa_ga Stage3/job-scripts/load_translated_data.sh
+
 # pt/id/ko: both benchmarks (xGQA's testdev images are the same underlying
 # GQA test-dev set as bn's, just translated -- already covered by the
 # images.zip extraction done in the very first Bengali setup, no re-extraction
