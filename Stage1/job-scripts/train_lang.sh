@@ -13,10 +13,12 @@
 
 # Per-language Stage 1 training -- one independent checkpoint per language,
 # so ru/de/zh (or any future addition) can be submitted and run in parallel
-# instead of serially through one shared checkpoint. Does not touch the
-# existing Bengali checkpoint at Stage1/outputs/M2-ALIGN/.
+# instead of serially through one shared checkpoint. Bengali has been
+# migrated onto this same per-language layout (Stage1/outputs/bn/); the old
+# Stage1/outputs/M2-ALIGN/ checkpoint is no longer read by anything.
 #
 # Usage:
+#   LANG=bn sbatch --job-name=stage1_train_bn train_lang.sh
 #   LANG=ru sbatch --job-name=stage1_train_ru train_lang.sh
 #   LANG=de sbatch --job-name=stage1_train_de train_lang.sh
 #   LANG=zh sbatch --job-name=stage1_train_zh train_lang.sh
@@ -33,6 +35,7 @@
 set -euo pipefail
 
 declare -A LANG_NAMES=(
+  [bn]="Bengali"
   [ru]="Russian" [de]="German" [zh]="Chinese"
   [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
   [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
@@ -119,6 +122,7 @@ cd "$HOME/projects/def-annielee/tajm/M2-ALIGN/Stage1"
 # --master_port varies by LANG so parallel submissions for different
 # languages don't collide on the same deepspeed rendezvous port.
 declare -A PORTS=(
+  [bn]=50010
   [ru]=50011 [de]=50012 [zh]=50013
   [pt]=50017 [id]=50018 [ko]=50019 [jv]=50020 [mn]=50021 [si]=50022 [ga]=50023
 )

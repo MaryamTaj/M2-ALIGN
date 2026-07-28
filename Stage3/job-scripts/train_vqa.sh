@@ -105,7 +105,7 @@ if [ ! -d "$GQA_IMAGES_DIR" ]; then
 fi
 if [ ! -f "$STAGE2_MAPPING_CKPT" ]; then
   echo "ERROR: Stage 2 vision-mapping checkpoint not found: $STAGE2_MAPPING_CKPT"
-  echo "       Run Stage2/job-scripts/train.sh first."
+  echo "       Run: LANG=bn sbatch Stage2/job-scripts/train_lang.sh"
   exit 1
 fi
 if [ ! -d "$DATA_DIR" ] || [ -z "$(ls "$DATA_DIR"/*.jsonl 2>/dev/null)" ]; then

@@ -6,181 +6,31 @@ module load cudacore/.12.2.2
 module load arrow/18.1.0
 source $SCRATCH/venvs/m2-align/bin/activate
 
-# Load Stage 1 data:
-python Stage1/load_text.py --languages Bengali \
-        --output_dir Stage1/data --n_samples 100000
-
-# Train Stage 1 (text):
-sbatch Stage1/job-scripts/train.sh
-
-# Load Stage 2 data:
-python Stage2/load_image.py --languages bn --n-per-language 1236 --output-dir Stage2/data
-
-# Train Stage 2 (image):
-sbatch Stage2/job-scripts/train.sh
-
-# Load Stage 3 data:
-export HF_HOME="$SCRATCH/huggingface"
-python -c "from datasets import load_dataset; load_dataset('lmms-lab/GQA', 'train_balanced_instructions', split='train')"
-sbatch Stage3/job-scripts/load_vqa_data.sh
-
-python Stage3/load_text_evaluation.py --languages bn
-python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages bn
-# Download images.zip
-mkdir -p Stage3/data/gqa/images
-wget -P Stage3/data/gqa https://nlp.stanford.edu/data/gqa/images.zip
-# Confirm images.zip is uncorrupted.
-unzip -t Stage3/data/gqa/images.zip > /tmp/zip_test.log 2>&1
-tail -5 /tmp/zip_test.log   # must end "No errors detected in compressed data"
-# Ensure training and test QA exist.
-ls -la Stage3/data/stage3b/bengali.jsonl Stage3/data/stage3b_eval/xgqa/bn.jsonl
-# Identify the union of training, and test images.
-jq -r '.vg_image_id' Stage3/data/stage3b/bengali.jsonl | sort -u > /tmp/train_ids.txt
-jq -r '.vg_image_id' Stage3/data/stage3b_eval/xgqa/bn.jsonl | sort -u > /tmp/eval_ids.txt
-sort -u /tmp/train_ids.txt /tmp/eval_ids.txt > /tmp/needed_ids.txt
-wc -l /tmp/train_ids.txt /tmp/eval_ids.txt /tmp/needed_ids.txt
-# Extract specific images from the zip.
-sed 's/^/images\//; s/$/.jpg/' /tmp/needed_ids.txt > /tmp/needed_members.txt
-unzip Stage3/data/gqa/images.zip $(cat /tmp/needed_members.txt) -d Stage3/data/gqa/images
-# Verify you have training, and test images.
-wc -l /tmp/have_ids.txt
-comm -23 /tmp/needed_ids.txt /tmp/have_ids.txt | wc -l
-# Delete the zip to free space.
-rm Stage3/data/gqa/images.zip
-
-
-# Train Stage 3 (VQA):
-sbatch Stage3/job-scripts/train_vqa.sh
-
-# Evaluate Stage 3:
-BENCHMARK=xgqa LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa.sh
-TASK=mgsm   LANGS="bn" sbatch Stage3/job-scripts/evaluate_text.sh
-TASK=msvamp LANGS="bn" sbatch Stage3/job-scripts/evaluate_text.sh
-
-# Evaluatate Baseline:
-sbatch --export=BENCHMARK=xgqa,LANG=bn Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=TASK=mgsm,LANGS=bn   Baseline/job-scripts/evaluate_text.sh
-sbatch --export=TASK=msvamp,LANGS=bn Baseline/job-scripts/evaluate_text.sh
-
-
-
-
-
-
-# Expanding to multiple languages
 # (ON WORKSTATION ONLY)####################################################
-# To start data transfer:
-tmux new -s globus
-cd ~/globusconnectpersonal-3.2.9
-./globusconnectpersonal -start
-# Ctrl+b d to detach once you see it running
-
-# To stop data transfer:
-cd ~/globusconnectpersonal-3.2.9
-./globusconnectpersonal -stop
-
-
 python -m venv .venv && source .venv/bin/activate
 pip install datasets requests pillow
 pip install "datasets<4.0"
 tmux new -s M2ALIGN
-tmux new-window -n am
-source .venv/bin/activate
 
+tmux new-window -t M2ALIGN -n bn
+tmux attach -t M2ALIGN:bn
+source .venv/bin/activate
+python Stage1/load_text.py --languages Bengali --output_dir Stage1/data --n_samples 100000
+
+tmux new-window -t M2ALIGN -n ru
+tmux attach -t M2ALIGN:ru
+source .venv/bin/activate
 python Stage1/load_text.py --languages Russian --output_dir Stage1/data --n_samples 100000
-python Stage1/load_text.py --languages German  --output_dir Stage1/data --n_samples 100000
-python Stage1/load_text.py --languages Chinese --output_dir Stage1/data --n_samples 100000
-###########################################################################
 
-LANG=ru sbatch --job-name=stage1_train_ru Stage1/job-scripts/train_lang.sh
-LANG=de sbatch --job-name=stage1_train_de Stage1/job-scripts/train_lang.sh
-LANG=zh sbatch --job-name=stage1_train_zh Stage1/job-scripts/train_lang.sh
-
-# (ON WORKSTATION ONLY)####################################################
-# One command, not one per language: load_image.py streams WIT ONCE and
-# collects every requested language from that same pass (streaming the
-# ~6.5M-row dataset three separate times would be wasteful). It writes each
-# language to its own <output-dir>/<lang>/ (wit_pairs.jsonl + image_cache/)
-# automatically -- no --image-cache-dir override needed.
-python Stage2/load_image.py --languages ru,de,zh --n-per-language 1236 --output-dir Stage2/data
-
-###########################################################################
-
-LANG=ru sbatch --job-name=stage2_train_ru Stage2/job-scripts/train_lang.sh
-LANG=de sbatch --job-name=stage2_train_de Stage2/job-scripts/train_lang.sh
-LANG=zh sbatch --job-name=stage2_train_zh Stage2/job-scripts/train_lang.sh
-
-# (ON WORKSTATION ONLY)####################################################
-# --output must be Stage3/data/english.jsonl -- that's the filename every
-# load_vqa_data_lang.sh run (ru/de/zh and the 7-language block further
-# below) reads via GQA_JSONL, regardless of target language.
-python Stage3/dump_gqa_sample.py --n_samples 30000 --seed 42 --output Stage3/data/english.jsonl
-
-LANG=ru sbatch --job-name=stage3b_load_vqa_ru Stage3/job-scripts/load_vqa_data_lang.sh
-LANG=de sbatch --job-name=stage3b_load_vqa_de Stage3/job-scripts/load_vqa_data_lang.sh
-LANG=zh sbatch --job-name=stage3b_load_vqa_zh Stage3/job-scripts/load_vqa_data_lang.sh
-python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages ru,de,zh
-python Stage3/load_text_evaluation.py --languages ru de zh
-###########################################################################
-
-LANG=ru sbatch --job-name=stage3b_train_vqa_ru Stage3/job-scripts/train_vqa_lang.sh
-LANG=de sbatch --job-name=stage3b_train_vqa_de Stage3/job-scripts/train_vqa_lang.sh
-LANG=zh sbatch --job-name=stage3b_train_vqa_zh Stage3/job-scripts/train_vqa_lang.sh
-
-LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=de BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-LANG=zh BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_vqa_lang.sh
-
-LANG=ru TASK=mgsm   sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=de TASK=mgsm   sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=zh TASK=mgsm   sbatch Stage3/job-scripts/evaluate_text_lang.sh
-
-LANG=ru TASK=msvamp sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=de TASK=msvamp sbatch Stage3/job-scripts/evaluate_text_lang.sh
-LANG=zh TASK=msvamp sbatch Stage3/job-scripts/evaluate_text_lang.sh
-
-
-# Baseline (raw Qwen3-VL, no checkpoint dependency -- can run any time, even now):
-sbatch --export=BENCHMARK=xgqa,LANG=ru Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=xgqa,LANG=de Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=xgqa,LANG=zh Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=TASK=mgsm,LANGS="ru de zh"   Baseline/job-scripts/evaluate_text.sh
-sbatch --export=TASK=msvamp,LANGS="ru de zh" Baseline/job-scripts/evaluate_text.sh
-
-
-
-
-# Expanding to the remaining 7 languages (Portuguese, Indonesian, Korean,
-# Javanese, Mongolian, Sinhalese, Irish) -- rounds the project out to all
-# 11 languages (bn/de/ru/zh + these 7).
-#
-# Differences from every block above:
-#   - No MGSM/MSVAMP coverage for any of these 7 -- neither benchmark has
-#     configs for pt/id/ko/jv/mn/si/ga, so there is no Stage 3a *text* eval
-#     step for this block at all (skip straight to VQA eval below). This is
-#     a real gap, not an oversight -- there's no fix short of finding/adding
-#     a different text benchmark.
-#   - VQA eval policy: run every benchmark a language has coverage in, not
-#     just one -- xGQA and CVQA are independent evaluations. pt/id/ko have
-#     BOTH (xGQA's own 8-language set includes them, now activated in
-#     XGQA_LANGS; CVQA covers them too) -- both are run below. jv/mn/si/ga
-#     get CVQA only: xGQA genuinely has no coverage for any of the four
-#     (outside its 8 languages). CVQA has no German subset, which is why
-#     de isn't in this block at all.
-#   - NLLB tags: Portuguese por_Latn | Indonesian ind_Latn | Korean
-#     kor_Hang | Javanese jav_Latn | Mongolian khk_Cyrl (NOT orm_Latn-style
-#     "mon_*" -- NLLB-200 only ships Halh Mongolian, Cyrillic script) |
-#     Sinhalese sin_Sinh | Irish gle_Latn.
-
-# (ON WORKSTATION ONLY)####################################################
-python -m venv .venv && source .venv/bin/activate
-pip install datasets requests pillow
-pip install "datasets<4.0"
-tmux new -s M2ALIGN
-tmux new-window -n Stage2
+tmux new-window -t M2ALIGN -n de
+tmux attach -t M2ALIGN:de
 source .venv/bin/activate
-python Stage2/load_image.py --stats-only \
-     --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
+python Stage1/load_text.py --languages German --output_dir Stage1/data --n_samples 100000
+
+tmux new-window -t M2ALIGN -n zh
+tmux attach -t M2ALIGN:zh
+source .venv/bin/activate
+python Stage1/load_text.py --languages Chinese --output_dir Stage1/data --n_samples 100000
 
 tmux new-window -t M2ALIGN -n pt
 tmux attach -t M2ALIGN:pt
@@ -227,17 +77,11 @@ LANG=si sbatch --job-name=stage1_train_si Stage1/job-scripts/train_lang.sh
 LANG=ga sbatch --job-name=stage1_train_ga Stage1/job-scripts/train_lang.sh
 
 # (ON WORKSTATION ONLY)####################################################
-# Coverage check for all 11 languages (re-run for fresh numbers; the
-# --stats-only call earlier in this block already covers this too). No
-# backslash line-continuation here on purpose -- a `#`
-# anywhere on a joined line comments out everything after it, which is what
-# silently dropped --languages/--max-rows in an earlier copy-paste attempt.
+tmux new-window -t M2ALIGN -n Stage2
+source .venv/bin/activate
 python Stage2/load_image.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
 
-# One command, one stream pass over WIT for all 7 (see the ru/de/zh block's
-# note on why this isn't 7 separate invocations). Each language still gets
-# its own <output-dir>/<lang>/wit_pairs.jsonl + image_cache/.
-python Stage2/load_image.py --languages pt,id,ko,jv,mn,si,ga --n-per-language 1236 --output-dir Stage2/data
+python Stage2/load_image.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --output-dir Stage2/data
 ###########################################################################
 
 LANG=pt sbatch --job-name=stage2_train_pt Stage2/job-scripts/train_lang.sh
@@ -265,7 +109,7 @@ LANG=ga sbatch --job-name=stage3b_load_vqa_ga Stage3/job-scripts/load_vqa_data_l
 # needed). jv/mn/si/ga: CVQA only, no xGQA coverage for these four.
 python Stage3/load_vqa_evaluation.py --benchmark xgqa --languages pt,id,ko
 python Stage3/load_vqa_evaluation.py --benchmark cvqa --languages pt,id,ko,jv,mn,si,ga
-# No load_text_evaluation.py call here -- see the "no MGSM/MSVAMP
+# No load_text_evaluation.py call here -- see the "no MGSM/MSVAMP/AfriMGSM
 # coverage" note above.
 ###########################################################################
 
