@@ -287,20 +287,35 @@ def _resolve_cvqa_subsets(ds, candidates: list[str], logger: logging.Logger) -> 
     return matched
 
 
-def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
-    """Load CVQA test rows filtered to one language.
+def load_cvqa(lang: str, image_cache_dir: str, logger: logging.Logger) -> list[dict]:
+    """Load CVQA test rows filtered to one language, saving each row's image locally.
 
     Args:
         lang: One of the keys in :data:`CVQA_SUBSET_CANDIDATES` (e.g. ``mn``/``si``/``ga``).
+        image_cache_dir: Directory each row's image is saved into, as
+            ``<row id>.jpg``.
         logger: Logger instance.
 
     Returns:
-        List of row dicts: ``{id, image_url, query, choices, answer_index,
-        source_language, source_dataset}``. Uses the dataset's own
-        ``Image Source`` URL field for lazy resolution (same pattern as
-        WIT's ``image_url`` / xGQA's ``vg_image_id``) rather than the
-        embedded HF ``Image`` feature, so this loader stays a plain JSONL
-        writer with no PIL/image-encoding dependency.
+        List of row dicts: ``{id, query, choices, answer_index,
+        source_language, source_dataset}``. A row's image lives at
+        ``<image_cache_dir>/<id>.jpg``.
+
+    Images come from the dataset's own embedded ``image`` feature (decoded
+    locally from the already-downloaded parquet files -- no extra network
+    fetch), *not* from the ``Image Source`` field. A live sample of
+    ``afaji/cvqa`` showed ``Image Source`` is not usable as a download URL
+    for most rows: wherever ``Image Type == "Self"`` (contributor's own,
+    unpublished photo), ``Image Source`` is a literal sentinel string
+    (``"Self-open"`` / ``"Self-research_only"``), not a URL at all --
+    fetching it raises immediately. Many ``"External"`` rows fare no
+    better: ``Image Source`` is often a Commons/Flickr *page* URL (e.g.
+    ``.../wiki/File:Foo.jpg``), not the raw file, so the response is HTML,
+    not an image. Worse, every ``"Self-open"`` row shares the exact same
+    sentinel string, so keying a cache by ``sha1(Image Source)`` (the
+    pattern used for WIT/WorldCuisines) silently collides multiple rows'
+    images onto the same cache entry. The embedded ``image`` feature and
+    the row's own unique ``ID`` sidestep both problems.
 
     Note:
         In ``afaji/cvqa``, ``"Question"`` is the *original* native-language
@@ -324,23 +339,35 @@ def load_cvqa(lang: str, logger: logging.Logger) -> list[dict]:
     ds_lang = ds.filter(lambda r: str(r["Subset"]) in subsets)
     logger.info("Filtered to Subset in %s: %d rows", subsets, len(ds_lang))
 
+    os.makedirs(image_cache_dir, exist_ok=True)
     rows = []
+    n_image_failed = 0
     for r in ds_lang:
         query = r.get("Question") or r.get("Translated Question")
         choices = r.get("Translated Options") or r.get("Options")
         label = r.get("Label")
-        image_url = r.get("Image Source")
-        if not query or not choices or label is None or not image_url:
+        image = r.get("image")
+        row_id = str(r.get("ID"))
+        if not query or not choices or label is None or image is None or not row_id:
             continue
+        image_path = os.path.join(image_cache_dir, f"{row_id}.jpg")
+        if not os.path.exists(image_path):
+            try:
+                image.convert("RGB").save(image_path, format="JPEG", quality=85)
+            except Exception:
+                n_image_failed += 1
+                continue
         rows.append({
-            "id": str(r.get("ID")),
-            "image_url": image_url,
+            "id": row_id,
             "query": query,
             "choices": list(choices),
             "answer_index": int(label),
             "source_language": lang,
             "source_dataset": "cvqa_test",
         })
+    if n_image_failed:
+        logger.info("CVQA %s: %d rows dropped (image decode/save failed)", lang, n_image_failed)
+    logger.info("CVQA %s: %d rows with saved images -> %s", lang, len(rows), image_cache_dir)
     return rows
 
 
@@ -360,10 +387,17 @@ def main() -> None:
     parser.add_argument("--worldcuisines-split", type=str, default="test_small",
                         choices=["test_small", "test_large"])
     parser.add_argument("--worldcuisines-task", type=str, default="task1", choices=["task1", "task2"])
+    parser.add_argument(
+        "--cvqa-image-cache-dir", type=str, default=None,
+        help="Where each CVQA row's image is saved, as <id>.jpg. Defaults to "
+             "<output_dir>/cvqa/images -- pass evaluate.py's --image-cache-dir the same path.",
+    )
     args = parser.parse_args()
 
     if args.output_dir is None:
         args.output_dir = os.path.join(SCRATCH_ROOT, "data")
+    if args.cvqa_image_cache_dir is None:
+        args.cvqa_image_cache_dir = os.path.join(args.output_dir, "cvqa", "images")
 
     logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
@@ -376,7 +410,7 @@ def main() -> None:
             rows = load_worldcuisines(lang, args.worldcuisines_split, args.worldcuisines_task, logger)
             out_path = os.path.join(args.output_dir, "worldcuisines", f"{lang}.jsonl")
         else:
-            rows = load_cvqa(lang, logger)
+            rows = load_cvqa(lang, args.cvqa_image_cache_dir, logger)
             out_path = os.path.join(args.output_dir, "cvqa", f"{lang}.jsonl")
         write_jsonl(out_path, rows, logger)
 

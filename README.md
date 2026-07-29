@@ -151,14 +151,6 @@ comm -23 /tmp/needed_all.txt /tmp/have_ids.txt | wc -l   # must print 0
 
 rm images.zip
 
-// CVQA images are resolved by URL (like WIT), not GQA image id -- no
-// images.zip dependency there. But evaluate.py's on-the-fly URL download
-// only works on a workstation; Narval compute nodes have no internet
-// (same reason Stage2/load_image.py pre-downloads WIT images instead of
-// letting train.py hit the network), so pre-download into evaluate.py's
-// --image-cache-dir here before transferring.
-python Stage3/load_evaluation_images.py --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga
-
 // Transfer to /scratch/tajm/M2-ALIGN/Stage3/data/ using Globus.
 ###########################################################################
 LANG=bn sbatch --job-name=stage3b_train_vqa_bn Stage3/job-scripts/train.sh
@@ -173,8 +165,6 @@ LANG=mn sbatch --job-name=stage3b_train_vqa_mn Stage3/job-scripts/train.sh
 LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
 
-# (ON WORKSTATION ONLY)####################################################
-python Stage3/load_evaluation_images.py --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga
 ###########################################################################
 LANG=bn BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
@@ -197,3 +187,21 @@ LANG=ru BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evalua
 LANG=zh BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 
 
+sbatch --export=BENCHMARK=xgqa,LANG=bn Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=ru Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=de Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=zh Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=pt Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=id Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=xgqa,LANG=ko Baseline/job-scripts/evaluate.sh
+
+sbatch --export=BENCHMARK=cvqa,LANG=pt Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=id Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=ko Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=jv Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=mn Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=si Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=ga Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=bn Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=ru Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=zh Baseline/job-scripts/evaluate.sh

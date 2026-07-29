@@ -298,8 +298,9 @@ def main() -> None:
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir",
                         default=os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3", "data", "cvqa", "images"),
-                        help="URL image cache dir (used for worldcuisines/cvqa). Defaults to the same "
-                             "cache Stage3/load_evaluation_images.py populates and Stage3/evaluate.py reads.")
+                        help="Image cache dir. For cvqa: pre-populated by Stage3/load_evaluation_data.py's "
+                             "--cvqa-image-cache-dir, looked up by row id (no network access needed). "
+                             "For worldcuisines: a URL download cache, populated on the fly.")
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--max-examples", type=int, default=None)
@@ -320,6 +321,8 @@ def main() -> None:
 
     if args.benchmark == "xgqa":
         resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
+    elif args.benchmark == "cvqa":
+        resolver = lambda row: load_image_by_id(args.image_cache_dir, row["id"])
     else:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
 

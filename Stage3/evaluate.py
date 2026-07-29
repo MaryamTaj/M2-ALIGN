@@ -412,7 +412,9 @@ def main() -> None:
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "cvqa", "images"),
-                        help="URL image cache dir (used for worldcuisines/cvqa).")
+                        help="Image cache dir. For cvqa: pre-populated by load_evaluation_data.py's "
+                             "--cvqa-image-cache-dir, looked up by row id (no network access needed). "
+                             "For worldcuisines: a URL download cache, populated on the fly.")
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--mt-path", default="facebook/nllb-200-3.3B")
     parser.add_argument("--mapping-ckpt", required=True,
@@ -442,6 +444,8 @@ def main() -> None:
 
     if args.benchmark == "xgqa":
         resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
+    elif args.benchmark == "cvqa":
+        resolver = lambda row: load_image_by_id(args.image_cache_dir, row["id"])
     else:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
 
