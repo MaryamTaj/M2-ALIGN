@@ -411,7 +411,7 @@ def main() -> None:
                          help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
-    parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "stage3b_eval", "image_cache"),
+    parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "cvqa", "images"),
                         help="URL image cache dir (used for worldcuisines/cvqa).")
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--mt-path", default="facebook/nllb-200-3.3B")

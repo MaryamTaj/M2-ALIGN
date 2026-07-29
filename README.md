@@ -66,6 +66,8 @@ tmux new-window -t M2ALIGN -n ga
 tmux attach -t M2ALIGN:ga
 source .venv/bin/activate
 python Stage1/load_text.py --languages Irish      --output_dir $SCRATCH/M2-ALIGN/Stage1/data --n_samples 100000
+
+// Transfer to /scratch/tajm/M2-ALIGN/Stage1/data/ using Globus.
 ###########################################################################
 LANG=bn sbatch --job-name=stage1_train_bn Stage1/job-scripts/train.sh
 LANG=ru sbatch --job-name=stage1_train_ru Stage1/job-scripts/train.sh
@@ -85,8 +87,9 @@ source .venv/bin/activate
 python Stage2/load_image.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
 
 python Stage2/load_image.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
-###########################################################################
 
+// Transfer to /scratch/tajm/M2-ALIGN/Stage2/data/ using Globus.
+###########################################################################
 LANG=bn sbatch --job-name=stage2_train_bn Stage2/job-scripts/train.sh
 LANG=ru sbatch --job-name=stage2_train_ru Stage2/job-scripts/train.sh
 LANG=de sbatch --job-name=stage2_train_de Stage2/job-scripts/train.sh
@@ -99,6 +102,11 @@ LANG=mn sbatch --job-name=stage2_train_mn Stage2/job-scripts/train.sh
 LANG=si sbatch --job-name=stage2_train_si Stage2/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage2_train_ga Stage2/job-scripts/train.sh
 
+# (ON WORKSTATION ONLY)####################################################
+// Stage 3 train QA
+python Stage3/load_base_data.py --n_samples 30000 --seed 42 \
+  --output Stage3/data/english.jsonl
+###########################################################################
 LANG=bn sbatch --job-name=stage3b_load_vqa_bn Stage3/job-scripts/load_translated_data.sh
 LANG=ru sbatch --job-name=stage3b_load_vqa_ru Stage3/job-scripts/load_translated_data.sh
 LANG=de sbatch --job-name=stage3b_load_vqa_de Stage3/job-scripts/load_translated_data.sh
@@ -111,30 +119,52 @@ LANG=mn sbatch --job-name=stage3b_load_vqa_mn Stage3/job-scripts/load_translated
 LANG=si sbatch --job-name=stage3b_load_vqa_si Stage3/job-scripts/load_translated_data.sh
 LANG=ga sbatch --job-name=stage3b_load_vqa_ga Stage3/job-scripts/load_translated_data.sh
 
-# pt/id/ko: both benchmarks (xGQA's testdev images are the same underlying
-# GQA test-dev set as bn's, just translated -- already covered by the
-# images.zip extraction done in the very first Bengali setup, no re-extraction
-# needed). jv/mn/si/ga: CVQA only, no xGQA coverage for these four.
-python Stage3/load_evaluation_data.py --benchmark xgqa --languages pt,id,ko
-python Stage3/load_evaluation_data.py --benchmark cvqa --languages pt,id,ko,jv,mn,si,ga
-# No load_text_evaluation.py call here -- see the "no MGSM/MSVAMP/AfriMGSM
-# coverage" note above.
+# (ON WORKSTATION ONLY)####################################################
+// Stage 3 test QA
+python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko \
+  --output_dir Stage3/data
+python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga \
+  --output_dir Stage3/data
+
+// Stage 3 images
+wget -c https://nlp.stanford.edu/data/gqa/images.zip
+// GQA's train images
+jq -r '.vg_image_id' Stage3/data/english.jsonl \
+  | sort -u > /tmp/needed_train_ids.txt
+// GQA's test images
+jq -r '.vg_image_id' Stage3/data/xgqa/{bn,de,ru,zh,pt,id,ko}.jsonl \
+  | sort -u > /tmp/needed_xgqa_ids.txt
+// Take the union (need images for both training and xGQA eval)
+sort -u /tmp/needed_train_ids.txt /tmp/needed_xgqa_ids.txt > /tmp/needed_all.txt
+
+python3 -c "
+import zipfile
+needed = {line.strip() for line in open('/tmp/needed_all.txt')}
+with zipfile.ZipFile('images.zip') as z:
+    names = set(z.namelist())
+    members = [f'images/{i}.jpg' for i in needed if f'images/{i}.jpg' in names]
+    z.extractall('Stage3/data/gqa', members=members)
+    print(f'extracted {len(members)} of {len(needed)} needed images')
+"
+ls Stage3/data/gqa/images | sed 's/\.jpg$//' | sort -u > /tmp/have_ids.txt
+comm -23 /tmp/needed_all.txt /tmp/have_ids.txt | wc -l   # must print 0
+
+rm images.zip
+
+// CVQA images are resolved by URL (like WIT), not GQA image id -- no
+// images.zip dependency there. But evaluate.py's on-the-fly URL download
+// only works on a workstation; Narval compute nodes have no internet
+// (same reason Stage2/load_image.py pre-downloads WIT images instead of
+// letting train.py hit the network), so pre-download into evaluate.py's
+// --image-cache-dir here before transferring.
+python Stage3/load_evaluation_images.py --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga
+
+// Transfer to /scratch/tajm/M2-ALIGN/Stage3/data/ using Globus.
 ###########################################################################
-
-# GQA training images (Stage 3b VQA training data, all 7 languages): same
-# vg_image_ids as the ru/de/zh round (same shared english.jsonl) -- should
-# already be covered by the existing $SCRATCH/M2-ALIGN/Stage3/data/gqa/images/ extraction.
-# Verify, don't assume:
-jq -r '.vg_image_id' $SCRATCH/M2-ALIGN/Stage3/data/pt.jsonl $SCRATCH/M2-ALIGN/Stage3/data/id.jsonl $SCRATCH/M2-ALIGN/Stage3/data/ko.jsonl \
-  $SCRATCH/M2-ALIGN/Stage3/data/jv.jsonl $SCRATCH/M2-ALIGN/Stage3/data/mn.jsonl $SCRATCH/M2-ALIGN/Stage3/data/si.jsonl $SCRATCH/M2-ALIGN/Stage3/data/ga.jsonl \
-  | sort -u > /tmp/needed_ids_7.txt
-ls $SCRATCH/M2-ALIGN/Stage3/data/gqa/images | sed 's/\.jpg$//' | sort -u > /tmp/have_ids.txt
-comm -23 /tmp/needed_ids_7.txt /tmp/have_ids.txt | wc -l   # must print 0
-# CVQA eval images are resolved by URL (like WIT), not GQA image id -- no
-# images.zip dependency there. xGQA eval (pt/id/ko) does need GQA images,
-# but reuses testdev images already extracted for bn -- same underlying
-# image set, only the question translations differ per language.
-
+LANG=bn sbatch --job-name=stage3b_train_vqa_bn Stage3/job-scripts/train.sh
+LANG=ru sbatch --job-name=stage3b_train_vqa_ru Stage3/job-scripts/train.sh
+LANG=de sbatch --job-name=stage3b_train_vqa_de Stage3/job-scripts/train.sh
+LANG=zh sbatch --job-name=stage3b_train_vqa_zh Stage3/job-scripts/train.sh
 LANG=pt sbatch --job-name=stage3b_train_vqa_pt Stage3/job-scripts/train.sh
 LANG=id sbatch --job-name=stage3b_train_vqa_id Stage3/job-scripts/train.sh
 LANG=ko sbatch --job-name=stage3b_train_vqa_ko Stage3/job-scripts/train.sh
@@ -143,53 +173,27 @@ LANG=mn sbatch --job-name=stage3b_train_vqa_mn Stage3/job-scripts/train.sh
 LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
 
-# pt/id/ko: both xGQA and CVQA (--images-dir is added automatically by
-# evaluate.sh whenever BENCHMARK=xgqa).
-LANG=pt BENCHMARK=xgqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
+# (ON WORKSTATION ONLY)####################################################
+python Stage3/load_evaluation_images.py --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga
+###########################################################################
+LANG=bn BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=de BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=zh BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=pt BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=pt BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
-LANG=pt BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=id BENCHMARK=xgqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=id BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=id BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
-LANG=id BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=ko BENCHMARK=xgqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=ko BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=ko BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
+
+
+LANG=pt BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=id BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ko BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-# jv/mn/si/ga: CVQA only -- no xGQA coverage for any of these four.
-LANG=jv BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=jv BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=mn BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=mn BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=si BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=si BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-LANG=ga BENCHMARK=cvqa CHECKPOINT_STAGE=stage2  sbatch Stage3/job-scripts/evaluate.sh
 LANG=ga BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-
-# Baseline (raw Qwen3-VL, no checkpoint dependency -- can run any time, even now):
-sbatch --export=BENCHMARK=xgqa,LANG=pt Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=pt Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=xgqa,LANG=id Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=id Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=xgqa,LANG=ko Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=ko Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=jv Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=mn Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=si Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=ga Baseline/job-scripts/evaluate_vqa.sh
-# No Baseline text eval for these 7 -- same reason, no benchmark exists.
-
-
-# bn/ru/zh: CVQA in addition to xGQA above -- run both benchmarks wherever
-# both apply, they're independent evaluations, not redundant (CVQA's
-# "china"-only Chinese subset for zh). de is excluded here -- CVQA has no
-# German subset at all, so --languages de would error.
-python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh
-BENCHMARK=cvqa LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=bn BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ru BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
-sbatch --export=BENCHMARK=cvqa,LANG=bn Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=ru Baseline/job-scripts/evaluate_vqa.sh
-sbatch --export=BENCHMARK=cvqa,LANG=zh Baseline/job-scripts/evaluate_vqa.sh
+
 

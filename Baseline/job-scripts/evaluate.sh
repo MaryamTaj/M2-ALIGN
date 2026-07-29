@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=baseline_evaluate_vqa
+#SBATCH --job-name=baseline_evaluate
 #SBATCH --account=def-annielee
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
-#SBATCH --output=/scratch/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_vqa_%x_%j.log
+#SBATCH --output=/scratch/tajm/M2-ALIGN/Baseline/logs/baseline_evaluate_%x_%j.log
 
 # Raw Qwen3-VL VQA baseline -- no NLLB encoder, no Mapping layer. This is
 # the "does the base model already do this" reference point, parallel to
@@ -17,9 +17,9 @@
 #
 # Usage — Bengali/xgqa is the only active combination right now
 # (Indonesian/Javanese, and worldcuisines/cvqa, are deferred):
-#   sbatch --export=BENCHMARK=xgqa,LANG=bn                     evaluate_vqa.sh
+#   sbatch --export=BENCHMARK=xgqa,LANG=bn                     evaluate.sh
 #
-# Optional: sbatch --export=BENCHMARK=xgqa,LANG=bn,MAX_EXAMPLES=50 evaluate_vqa.sh
+# Optional: sbatch --export=BENCHMARK=xgqa,LANG=bn,MAX_EXAMPLES=50 evaluate.sh
 
 set -euo pipefail
 
@@ -96,7 +96,7 @@ fi
 echo "=== Start baseline VQA evaluation: $BENCHMARK/$LANG ==="
 cd "$PROJECT_ROOT"
 # shellcheck disable=SC2086
-python -u Baseline/evaluate_vqa.py \
+python -u Baseline/evaluate.py \
   --benchmark "$BENCHMARK" \
   --lang      "$LANG" \
   --eval-data "$EVAL_DATA" \
