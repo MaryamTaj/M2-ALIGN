@@ -196,6 +196,13 @@ def score_choice_loglikelihood(
     full_ids = torch.cat([inputs["input_ids"], choice_ids], dim=1)
     full_mask = torch.cat([inputs["attention_mask"], torch.ones_like(choice_ids)], dim=1)
     model_kwargs = {k: v for k, v in inputs.items() if k not in ("input_ids", "attention_mask")}
+    if "mm_token_type_ids" in model_kwargs:
+        # Appended choice tokens are plain text (type 0) -- extend to match
+        # full_ids/full_mask's length or get_rope_index's per-token indexing
+        # (input_token_type[attention_mask[...].bool()]) shape-mismatches.
+        model_kwargs["mm_token_type_ids"] = torch.cat(
+            [model_kwargs["mm_token_type_ids"], torch.zeros_like(choice_ids)], dim=1,
+        )
     logits = model(input_ids=full_ids, attention_mask=full_mask, **model_kwargs).logits
 
     # Position i's logits predict token i+1, so the logit that predicts
