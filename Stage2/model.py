@@ -9,16 +9,21 @@ from transformers.generation.logits_process import LogitsProcessorList
 def _squeeze_pad(
     hidden_states: torch.Tensor,
     masks: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    position_ids: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """Remove padding columns that are zero for every example in the batch.
 
     Args:
         hidden_states: Float tensor of shape ``[batch, seq, dim]``.
         masks: Long tensor of shape ``[batch, seq]`` (1 = real, 0 = pad).
+        position_ids: Optional M-RoPE position ids ``[3, batch, seq]``
+            (see :meth:`VisualMindMerger._compute_position_ids`), reindexed
+            identically to *hidden_states*/*masks* when given.
 
     Returns:
-        ``(hidden_states, masks, keep_idx)`` with padding columns removed.
-        ``keep_idx`` is a boolean mask over the original sequence positions.
+        ``(hidden_states, masks, keep_idx, position_ids)`` with padding
+        columns removed. ``keep_idx`` is a boolean mask over the original
+        sequence positions. ``position_ids`` is ``None`` unless supplied.
     """
     x_01 = (masks != 0).long()
     seq_len = x_01.size(1)
@@ -37,7 +42,14 @@ def _squeeze_pad(
     keep_idx = (masks_sum > 0).unsqueeze(0).expand_as(masks)
     masks = masks[keep_idx].view(bs, -1)
     hidden_states = hidden_states[keep_idx.unsqueeze(-1).expand_as(hidden_states)].view(bs, -1, dim)
-    return hidden_states, masks, keep_idx
+
+    if position_ids is not None:
+        idx_pos = idx.unsqueeze(0).expand_as(position_ids)
+        position_ids = position_ids.gather(2, idx_pos)
+        keep_idx_pos = keep_idx.unsqueeze(0).expand_as(position_ids)
+        position_ids = position_ids[keep_idx_pos].view(3, bs, -1)
+
+    return hidden_states, masks, keep_idx, position_ids
 
 
 class PresencePenaltyGeneratedOnly:
@@ -254,21 +266,56 @@ class VisualMindMerger(nn.Module):
 
         return vis_padded, vis_mask
 
+    def _compute_position_ids(
+        self,
+        mm_token_type_ids: torch.Tensor,
+        image_grid_thw: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """M-RoPE position ids for a mixed vision/text prefix.
+
+        Calling ``model_llm`` with only ``inputs_embeds``/``attention_mask``
+        (no ``input_ids``) makes ``Qwen3VLModel`` fall back to a flat arange
+        tiled across all 3 RoPE axes, so image tokens lose their 2D spatial
+        layout (see Stage3/check_mrope_positions.py). ``get_rope_index``
+        only needs ``input_ids`` for its shape/attention-mask bookkeeping,
+        not its content, so a dummy tensor is enough.
+
+        Args:
+            mm_token_type_ids: ``[B, seq]`` (0=text, 1=image), matching the
+                layout ``get_rope_index`` expects.
+            image_grid_thw: ``[B, 3]`` patch grid dimensions.
+            attention_mask: ``[B, seq]``, 1 = real token.
+
+        Returns:
+            Long tensor of shape ``[3, B, seq]``.
+        """
+        dummy_ids = torch.zeros_like(mm_token_type_ids)
+        position_ids, _ = self.model_llm.model.get_rope_index(
+            input_ids=dummy_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            image_grid_thw=image_grid_thw,
+            attention_mask=attention_mask,
+        )
+        return position_ids
+
     def _build_prefix_raw(
         self,
         pixel_values: torch.Tensor,
         image_grid_thw: torch.Tensor,
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Assemble ``[BOS] + vis + X_m + [end_boundary]`` without squeeze_pad.
 
         squeeze_pad is applied separately in :meth:`forward` (over the full
         sequence including labels) and in :meth:`generate` (over the prefix).
 
         Returns:
-            ``(llm_embeds, llm_mask)`` of shapes ``[B, prefix_len, llm_dim]``
-            and ``[B, prefix_len]``.
+            ``(llm_embeds, llm_mask, mm_token_type_ids)`` of shapes
+            ``[B, prefix_len, llm_dim]``, ``[B, prefix_len]`` and
+            ``[B, prefix_len]`` (0=text, 1=image; see
+            :meth:`_compute_position_ids`).
         """
         B = input_ids_mt.size(0)
         device = input_ids_mt.device
@@ -276,6 +323,7 @@ class VisualMindMerger(nn.Module):
 
         vis_padded, vis_mask = self._embed_visual(pixel_values, image_grid_thw)
         vis_padded = vis_padded.to(dtype)
+        n_vis = vis_padded.size(1)
 
         mt_out = self.encoder_mt(
             input_ids=input_ids_mt,
@@ -289,9 +337,19 @@ class VisualMindMerger(nn.Module):
         end_boundary = self.mapping.get_embed().expand(B, 1, -1).to(dtype)
 
         ones1 = torch.ones(B, 1, dtype=torch.long, device=device)
+        zeros1 = torch.zeros(B, 1, dtype=torch.long, device=device)
         llm_embeds = torch.cat([bos_embed, vis_padded, x_m, end_boundary], dim=1)
         llm_mask = torch.cat([ones1, vis_mask, attention_mask_mt, ones1], dim=1)
-        return llm_embeds, llm_mask
+        mm_token_type_ids = torch.cat(
+            [
+                zeros1,
+                torch.ones(B, n_vis, dtype=torch.long, device=device),
+                torch.zeros_like(attention_mask_mt),
+                zeros1,
+            ],
+            dim=1,
+        )
+        return llm_embeds, llm_mask, mm_token_type_ids
 
     def forward(
         self,
@@ -318,7 +376,7 @@ class VisualMindMerger(nn.Module):
         B = input_ids_mt.size(0)
         dtype = self.llm_dtype
 
-        llm_embeds, llm_mask = self._build_prefix_raw(
+        llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
         )
@@ -327,15 +385,18 @@ class VisualMindMerger(nn.Module):
         label_embedding = self.llm_embedding_layer(labels).to(dtype)
         llm_embeds = torch.cat([llm_embeds, label_embedding], dim=1)
         llm_mask = torch.cat([llm_mask, mask_label], dim=1)
+        mm_token_type_ids = torch.cat([mm_token_type_ids, torch.zeros_like(mask_label)], dim=1)
         labels_masked = labels * mask_label + (-100) * (1 - mask_label)
         labels_full = torch.cat([pad_labels, labels_masked], dim=1)
 
-        llm_embeds, llm_mask, cut_idx = _squeeze_pad(llm_embeds, llm_mask)
+        position_ids = self._compute_position_ids(mm_token_type_ids, image_grid_thw, llm_mask)
+        llm_embeds, llm_mask, cut_idx, position_ids = _squeeze_pad(llm_embeds, llm_mask, position_ids)
         labels_full = labels_full[cut_idx].view(B, -1)
 
         out = self.model_llm(
             inputs_embeds=llm_embeds,
             attention_mask=llm_mask,
+            position_ids=position_ids,
             labels=labels_full,
         )
         return out.loss
@@ -363,16 +424,18 @@ class VisualMindMerger(nn.Module):
         Returns:
             List of decoded caption strings, one per batch example.
         """
-        llm_embeds, llm_mask = self._build_prefix_raw(
+        llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
         )
-        llm_embeds, llm_mask, _ = _squeeze_pad(llm_embeds, llm_mask)
+        position_ids = self._compute_position_ids(mm_token_type_ids, image_grid_thw, llm_mask)
+        llm_embeds, llm_mask, _, position_ids = _squeeze_pad(llm_embeds, llm_mask, position_ids)
         prefix_len = llm_embeds.size(1)
 
         gen_kw: dict = dict(
             inputs_embeds=llm_embeds,
             attention_mask=llm_mask,
+            position_ids=position_ids,
             max_new_tokens=self.max_gen_len,
             pad_token_id=self.llm_pad_token_id,
             do_sample=False,

@@ -281,14 +281,18 @@ def score_choice_loglikelihood(
         return float("-inf")
 
     with torch.autocast(device_type="cuda", dtype=amp_dtype):
-        prefix_embeds, prefix_mask = model._build_prefix_raw(
+        prefix_embeds, prefix_mask, mm_token_type_ids = model._build_prefix_raw(
             pixel_values, image_grid_thw, input_ids_mt, mask_mt,
             input_ids_query_llm, mask_query_llm,
         )
         choice_embeds = model.llm_embedding_layer(choice_ids).to(model.llm_dtype)
         full_embeds = torch.cat([prefix_embeds, choice_embeds], dim=1)
         full_mask = torch.cat([prefix_mask, torch.ones_like(choice_ids)], dim=1)
-        logits = model.model_llm(inputs_embeds=full_embeds, attention_mask=full_mask).logits
+        full_mm_token_type_ids = torch.cat([mm_token_type_ids, torch.zeros_like(choice_ids)], dim=1)
+        position_ids = model._compute_position_ids(full_mm_token_type_ids, image_grid_thw, full_mask)
+        logits = model.model_llm(
+            inputs_embeds=full_embeds, attention_mask=full_mask, position_ids=position_ids,
+        ).logits
 
     # Position i's logits predict token i+1, so the logit that predicts
     # choice token k sits at (prefix_len - 1 + k).
