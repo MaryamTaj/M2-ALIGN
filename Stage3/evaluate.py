@@ -184,6 +184,25 @@ def load_image_by_url(url: str, cache_dir: str) -> Image.Image | None:
 # Generation
 # ---------------------------------------------------------------------------
 
+def _build_chat_messages_with_image(image: Image.Image, system_message: str, prompt: str) -> list[dict]:
+    """Chat messages with the image embedded in the user turn's content.
+
+    Rendering these through `processor.apply_chat_template` (rather than
+    `tokenizer_llm.apply_chat_template` on the text alone) makes the
+    processor emit the correct number of `<|image_pad|>` placeholders --
+    sentineled with `<|vision_start|>`/`<|vision_end|>` -- for
+    `image_grid_thw`, in the system -> user(image+question) -> assistant
+    order Qwen3-VL was instruction-tuned on.
+    """
+    return [
+        {"role": "system", "content": [{"type": "text", "text": system_message}]},
+        {"role": "user", "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": prompt},
+        ]},
+    ]
+
+
 def generate_answer(
     image: Image.Image,
     question: str,
@@ -201,22 +220,24 @@ def generate_answer(
     max_mt_seq_len: int,
     max_llm_seq_len: int,
 ) -> str:
-    image_inputs = processor(
-        images=[image], text=[""], return_tensors="pt", min_pixels=visual_pixels, max_pixels=visual_pixels,
-    )
-    pixel_values = image_inputs["pixel_values"].to(device)
-    image_grid_thw = image_inputs["image_grid_thw"].to(device)
-
     tokenizer_mt.src_lang = nllb_code
     enc_mt = tokenizer_mt(question, truncation=True, max_length=max_mt_seq_len, return_tensors="pt")
     input_ids_mt = enc_mt["input_ids"].to(device)
     mask_mt = enc_mt["attention_mask"].to(device)
 
-    messages = [{"role": "system", "content": system_message}, {"role": "user", "content": prompt}]
-    formatted = tokenizer_llm.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    enc_llm = tokenizer_llm(formatted, truncation=True, max_length=max_llm_seq_len, return_tensors="pt")
+    messages = _build_chat_messages_with_image(image, system_message, prompt)
+    enc_llm = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt",
+        processor_kwargs={
+            "min_pixels": visual_pixels, "max_pixels": visual_pixels,
+            "truncation": True, "max_length": max_llm_seq_len,
+        },
+    )
+    pixel_values = enc_llm["pixel_values"].to(device)
+    image_grid_thw = enc_llm["image_grid_thw"].to(device)
     input_ids_query_llm = enc_llm["input_ids"].to(device)
     mask_query_llm = enc_llm["attention_mask"].to(device)
+    mm_token_type_ids_query_llm = enc_llm["mm_token_type_ids"].to(device)
 
     gen_kw = dict(do_sample=False, max_new_tokens=max_new_tokens, eos_token_id=tokenizer_llm.eos_token_id)
     with torch.autocast(device_type="cuda", dtype=amp_dtype):
@@ -224,6 +245,7 @@ def generate_answer(
             pixel_values=pixel_values, image_grid_thw=image_grid_thw,
             input_ids_mt=input_ids_mt, attention_mask_mt=mask_mt,
             input_ids_query_llm=input_ids_query_llm, mask_query_llm=mask_query_llm,
+            mm_token_type_ids_query_llm=mm_token_type_ids_query_llm,
             tokenizer_llm=tokenizer_llm, generation_kwargs=gen_kw,
         )
     return (out_texts[0] if out_texts else "").strip()
@@ -257,23 +279,25 @@ def score_choice_loglikelihood(
     in token length and batching them would need padding-aware log-prob
     gathering for a marginal speed gain over ~4 sequential passes/question.
     """
-    image_inputs = processor(
-        images=[image], text=[""], return_tensors="pt", min_pixels=visual_pixels, max_pixels=visual_pixels,
-    )
-    pixel_values = image_inputs["pixel_values"].to(device)
-    image_grid_thw = image_inputs["image_grid_thw"].to(device)
-
     tokenizer_mt.src_lang = nllb_code
     enc_mt = tokenizer_mt(question, truncation=True, max_length=max_mt_seq_len, return_tensors="pt")
     input_ids_mt = enc_mt["input_ids"].to(device)
     mask_mt = enc_mt["attention_mask"].to(device)
 
     prompt = build_cvqa_open_ended_prompt(question)
-    messages = [{"role": "system", "content": _VQA_SYSTEM}, {"role": "user", "content": prompt}]
-    formatted = tokenizer_llm.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    enc_llm = tokenizer_llm(formatted, truncation=True, max_length=max_llm_seq_len, return_tensors="pt")
+    messages = _build_chat_messages_with_image(image, _VQA_SYSTEM, prompt)
+    enc_llm = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt",
+        processor_kwargs={
+            "min_pixels": visual_pixels, "max_pixels": visual_pixels,
+            "truncation": True, "max_length": max_llm_seq_len,
+        },
+    )
+    pixel_values = enc_llm["pixel_values"].to(device)
+    image_grid_thw = enc_llm["image_grid_thw"].to(device)
     input_ids_query_llm = enc_llm["input_ids"].to(device)
     mask_query_llm = enc_llm["attention_mask"].to(device)
+    mm_token_type_ids_query_llm = enc_llm["mm_token_type_ids"].to(device)
 
     choice_ids = tokenizer_llm(choice_text, add_special_tokens=False, return_tensors="pt")["input_ids"].to(device)
     n_choice_tok = choice_ids.shape[1]
@@ -283,7 +307,7 @@ def score_choice_loglikelihood(
     with torch.autocast(device_type="cuda", dtype=amp_dtype):
         prefix_embeds, prefix_mask, mm_token_type_ids = model._build_prefix_raw(
             pixel_values, image_grid_thw, input_ids_mt, mask_mt,
-            input_ids_query_llm, mask_query_llm,
+            input_ids_query_llm, mask_query_llm, mm_token_type_ids_query_llm,
         )
         choice_embeds = model.llm_embedding_layer(choice_ids).to(model.llm_dtype)
         full_embeds = torch.cat([prefix_embeds, choice_embeds], dim=1)

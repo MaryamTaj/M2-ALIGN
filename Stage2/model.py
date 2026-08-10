@@ -162,16 +162,18 @@ class VisualMindMerger(nn.Module):
     """Stage 2 model: image + multilingual NLLB caption → Qwen3-VL decoder.
 
     The LLM input prefix is built as:
-        ``[BOS] + visual_tokens + X_m + [end_boundary]``
+        ``[BOS] + <|vision_start|> + visual_tokens + <|vision_end|> + X_m + [end_boundary]``
 
     where:
         ``visual_tokens`` = ``model_llm.visual(pixel_values, image_grid_thw)`` (frozen)
         ``X_m``           = ``mapping(encoder_mt(caption_in_source_language))``   (trainable)
 
-    Mirrors Stage 1's base (non-augmented) structure: no text prompt T is
-    appended after the boundary token.  Only the :class:`Mapping` parameters
-    are trained.  NLLB encoder and Qwen3-VL (including vision tower) are
-    fully frozen.
+    ``visual_tokens`` is fenced with Qwen3-VL's own vision sentinel tokens
+    so the frozen vision pathway sees the wrapper it was pretrained on.
+    Mirrors Stage 1's base (non-augmented) structure otherwise: no text
+    prompt T is appended after the boundary token.  Only the
+    :class:`Mapping` parameters are trained.  NLLB encoder and Qwen3-VL
+    (including vision tower) are fully frozen.
 
     Args:
         mt_path: HF id or local path for the NLLB model.
@@ -306,7 +308,16 @@ class VisualMindMerger(nn.Module):
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Assemble ``[BOS] + vis + X_m + [end_boundary]`` without squeeze_pad.
+        """Assemble ``[BOS] + <vis_start> + vis + <vis_end> + X_m + [end_boundary]``
+        without squeeze_pad.
+
+        The visual tokens are fenced with Qwen3-VL's own
+        ``<|vision_start|>``/``<|vision_end|>`` sentinels (frozen embedding
+        table, ``model_llm.config.vision_{start,end}_token_id``) so the
+        frozen, instruction-tuned vision pathway sees the same wrapper it
+        was pretrained on; unlike Stage 3, there is no chat template here to
+        nest the image inside (see class docstring), so this is purely a
+        sentinel-wrap, not a reordering, of the existing prefix.
 
         squeeze_pad is applied separately in :meth:`forward` (over the full
         sequence including labels) and in :meth:`generate` (over the prefix).
@@ -336,14 +347,25 @@ class VisualMindMerger(nn.Module):
         bos_embed = self.llm_embedding_layer(bos).view(B, 1, -1).to(dtype)
         end_boundary = self.mapping.get_embed().expand(B, 1, -1).to(dtype)
 
+        vision_start_id = self.model_llm.config.vision_start_token_id
+        vision_end_id = self.model_llm.config.vision_end_token_id
+        vision_start = torch.full((B,), vision_start_id, dtype=torch.long, device=device)
+        vision_end = torch.full((B,), vision_end_id, dtype=torch.long, device=device)
+        vision_start_embed = self.llm_embedding_layer(vision_start).view(B, 1, -1).to(dtype)
+        vision_end_embed = self.llm_embedding_layer(vision_end).view(B, 1, -1).to(dtype)
+
         ones1 = torch.ones(B, 1, dtype=torch.long, device=device)
         zeros1 = torch.zeros(B, 1, dtype=torch.long, device=device)
-        llm_embeds = torch.cat([bos_embed, vis_padded, x_m, end_boundary], dim=1)
-        llm_mask = torch.cat([ones1, vis_mask, attention_mask_mt, ones1], dim=1)
+        llm_embeds = torch.cat(
+            [bos_embed, vision_start_embed, vis_padded, vision_end_embed, x_m, end_boundary], dim=1
+        )
+        llm_mask = torch.cat([ones1, ones1, vis_mask, ones1, attention_mask_mt, ones1], dim=1)
         mm_token_type_ids = torch.cat(
             [
                 zeros1,
+                zeros1,
                 torch.ones(B, n_vis, dtype=torch.long, device=device),
+                zeros1,
                 torch.zeros_like(attention_mask_mt),
                 zeros1,
             ],

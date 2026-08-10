@@ -301,7 +301,11 @@ def load_training_state(
     model.mapping.load_state_dict(ckpt["model_state_dict"])
     optimizer.load_state_dict(ckpt["optimizer_state_dict"])
     torch.set_rng_state(ckpt["torch_rng_state"].cpu())
-    torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
+    # cuda_rng_state is a list of per-GPU ByteTensors (torch.cuda.get_rng_state_all());
+    # map_location=device above moves them onto the GPU, but set_rng_state_all requires
+    # CPU tensors (set_rng_state()'s isinstance(..., torch.ByteTensor) check only accepts
+    # the CPU tensor type), so they must be moved back explicitly.
+    torch.cuda.set_rng_state_all([t.cpu() for t in ckpt["cuda_rng_state"]])
     random.setstate(ckpt["python_rng_state"])
     return ckpt["epoch"], ckpt["step_in_epoch"], ckpt["global_step"], ckpt["best_val"]
 

@@ -409,16 +409,25 @@ class AugmentedVisualMindMerger(nn.Module):
     embedding of the question, giving the model direct access to the raw
     question in addition to the mapped MT encoder output.
 
-        ``LLM inputs_embeds = [BOS] + vis + X_m + [end_boundary] + T``
+        ``LLM inputs_embeds = [BOS] + X_m + [end_boundary] + T``
 
     where:
-        - ``vis   = model_llm.visual(pixel_values, image_grid_thw)`` (frozen)
         - ``X_m   = mapping(encoder_mt(question_tokens_mt))``          (trainable)
-        - ``T     = llm_embedding(question_tokens_llm)``                (frozen embedding table)
+        - ``T     = llm_embedding(question_tokens_llm)``, with vision-tower
+          features scattered into its ``<|image_pad|>`` positions          (frozen)
 
-    ``T`` is built from the *untranslated* source-language question
-    (tokenized directly by the LLM's own tokenizer), matching how Stage 3a's
-    `T` term is built from the untranslated source query rather than an
+    ``T`` is the *rendered chat template* (system message → user turn
+    containing the image, sentineled with ``<|vision_start|>``/
+    ``<|vision_end|>``, followed by the untranslated source-language
+    question → assistant-turn start), tokenized by the processor so the
+    ``<|image_pad|>`` placeholder count already matches ``image_grid_thw``.
+    Vision features (``model_llm.model.get_image_features``, frozen) are
+    spliced into those placeholder positions the same way
+    ``Qwen3VLModel.forward`` itself does (``get_placeholder_mask`` +
+    ``masked_scatter``), so the frozen, instruction-tuned Qwen3-VL sees
+    exactly the system → user(image+question) → assistant ordering and
+    sentinel wrapping it was trained on. This matches how Stage 3a's `T`
+    term is built from the untranslated source query rather than an
     English translation. Only the :class:`Mapping` parameters are
     trainable; the MT encoder, the vision tower, and the LLM are all
     frozen. Initialised directly from Stage 2's checkpoint (chained lineage:
@@ -459,10 +468,6 @@ class AugmentedVisualMindMerger(nn.Module):
             p.requires_grad = False
         self.llm_embedding_layer = self.model_llm.get_input_embeddings()
 
-        # Spatial merge size: Qwen3-VL merges adjacent visual patches by this factor.
-        vis_cfg = getattr(getattr(self.model_llm, "config", None), "vision_config", None)
-        self._spatial_merge_size: int = getattr(vis_cfg, "spatial_merge_size", 2)
-
         # Trainable mapping only
         mt_dim = self.model_mt.config.d_model
         llm_dim = getattr(self.llm_embedding_layer, "embedding_dim",
@@ -478,43 +483,6 @@ class AugmentedVisualMindMerger(nn.Module):
     def llm_dtype(self) -> torch.dtype:
         """Dtype of the frozen LLM weights (typically bf16)."""
         return self.llm_embedding_layer.weight.dtype
-
-    def _embed_visual(
-        self,
-        pixel_values: torch.Tensor,
-        image_grid_thw: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run the vision encoder and pad the batch to a uniform token count.
-
-        Args:
-            pixel_values: Preprocessed image patches ``[total_patches, C, pH, pW]``.
-            image_grid_thw: Patch-grid dimensions ``[B, 3]`` (temporal, h, w).
-
-        Returns:
-            ``(vis_padded, vis_mask)`` of shapes ``[B, max_vis, llm_dim]``
-            and ``[B, max_vis]`` (long, 1 = real token).
-        """
-        ms = self._spatial_merge_size
-        n_tokens = [
-            int(g[0] * g[1] * g[2]) // (ms * ms)
-            for g in image_grid_thw
-        ]
-
-        raw = self.model_llm.model.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
-        # raw: [sum(n_tokens), llm_dim]
-
-        B = image_grid_thw.size(0)
-        max_vis = max(n_tokens)
-        llm_dim = raw.size(-1)
-        device = raw.device
-
-        vis_padded = torch.zeros(B, max_vis, llm_dim, dtype=raw.dtype, device=device)
-        vis_mask = torch.zeros(B, max_vis, dtype=torch.long, device=device)
-        for i, (chunk, n) in enumerate(zip(raw.split(n_tokens, dim=0), n_tokens)):
-            vis_padded[i, :n] = chunk
-            vis_mask[i, :n] = 1
-
-        return vis_padded, vis_mask
 
     def _compute_position_ids(
         self,
@@ -557,8 +525,21 @@ class AugmentedVisualMindMerger(nn.Module):
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
+        mm_token_type_ids_query_llm: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Assemble ``[BOS] + vis + X_m + [end_boundary] + T`` without squeeze_pad.
+        """Assemble ``[BOS] + X_m + [end_boundary] + T`` without squeeze_pad.
+
+        Vision features are scattered into ``T``'s ``<|image_pad|>``
+        positions rather than concatenated as a separate block, mirroring
+        ``Qwen3VLModel.forward``'s own image/text merge
+        (``get_image_features`` + ``get_placeholder_mask`` +
+        ``masked_scatter``). This requires *input_ids_query_llm* to already
+        contain the correct number of ``<|image_pad|>`` tokens for
+        *image_grid_thw* -- i.e. it must come from
+        ``processor.apply_chat_template(...)`` with the image embedded in
+        the rendered template, not from a text-only tokenizer call (see
+        Stage3/evaluate.py's ``generate_answer``/``score_choice_loglikelihood``
+        and Stage3/train.py's ``collate_vqa``).
 
         squeeze_pad is applied separately in :meth:`forward` (over the full
         sequence including labels) and in :meth:`generate` (over the prefix).
@@ -568,9 +549,14 @@ class AugmentedVisualMindMerger(nn.Module):
             image_grid_thw: ``[B, 3]`` patch grid dimensions.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
-            input_ids_query_llm: LLM token ids for the *untranslated*
-                question, ``[B, query_seq]``.
+            input_ids_query_llm: LLM token ids for the rendered chat
+                template ``T`` (system + user(image+untranslated question) +
+                assistant-start), ``[B, query_seq]``, including
+                ``<|image_pad|>`` placeholders.
             mask_query_llm: Attention mask for *input_ids_query_llm*.
+            mm_token_type_ids_query_llm: Per-token type tag for
+                *input_ids_query_llm* (0=text, 1=image), as returned by the
+                processor alongside *input_ids_query_llm*.
 
         Returns:
             ``(llm_embeds, llm_mask, mm_token_type_ids)`` of shapes
@@ -582,9 +568,14 @@ class AugmentedVisualMindMerger(nn.Module):
         device = input_ids_mt.device
         dtype = self.llm_dtype
 
-        vis_padded, vis_mask = self._embed_visual(pixel_values, image_grid_thw)
-        vis_padded = vis_padded.to(dtype)
-        n_vis = vis_padded.size(1)
+        vision_out = self.model_llm.model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
+        image_embeds = torch.cat(vision_out.pooler_output, dim=0).to(dtype)
+
+        t_embed = self.llm_embedding_layer(input_ids_query_llm).to(dtype)
+        image_mask, _ = self.model_llm.model.get_placeholder_mask(
+            input_ids_query_llm, inputs_embeds=t_embed, image_features=image_embeds,
+        )
+        t_embed = t_embed.masked_scatter(image_mask, image_embeds)
 
         mt_out = self.encoder_mt(
             input_ids=input_ids_mt,
@@ -592,7 +583,6 @@ class AugmentedVisualMindMerger(nn.Module):
             output_hidden_states=False,
         )
         x_m = self.mapping(mt_out[0]).to(dtype)
-        t_embed = self.llm_embedding_layer(input_ids_query_llm).to(dtype)
 
         bos = torch.full((B,), self.llm_bos_token_id, dtype=torch.long, device=device)
         bos_embed = self.llm_embedding_layer(bos).view(B, 1, -1).to(dtype)
@@ -600,16 +590,10 @@ class AugmentedVisualMindMerger(nn.Module):
 
         ones1 = torch.ones(B, 1, dtype=torch.long, device=device)
         zeros1 = torch.zeros(B, 1, dtype=torch.long, device=device)
-        llm_embeds = torch.cat([bos_embed, vis_padded, x_m, end_boundary, t_embed], dim=1)
-        llm_mask = torch.cat([ones1, vis_mask, attention_mask_mt, ones1, mask_query_llm], dim=1)
+        llm_embeds = torch.cat([bos_embed, x_m, end_boundary, t_embed], dim=1)
+        llm_mask = torch.cat([ones1, attention_mask_mt, ones1, mask_query_llm], dim=1)
         mm_token_type_ids = torch.cat(
-            [
-                zeros1,
-                torch.ones(B, n_vis, dtype=torch.long, device=device),
-                torch.zeros_like(attention_mask_mt),
-                zeros1,
-                torch.zeros_like(mask_query_llm),
-            ],
+            [zeros1, torch.zeros_like(attention_mask_mt), zeros1, mm_token_type_ids_query_llm],
             dim=1,
         )
         return llm_embeds, llm_mask, mm_token_type_ids
@@ -622,6 +606,7 @@ class AugmentedVisualMindMerger(nn.Module):
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
+        mm_token_type_ids_query_llm: torch.Tensor,
         labels: torch.Tensor,
         mask_label: torch.Tensor,
     ) -> torch.Tensor:
@@ -632,9 +617,12 @@ class AugmentedVisualMindMerger(nn.Module):
             image_grid_thw: ``[B, 3]`` patch grid dimensions.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
-            input_ids_query_llm: LLM token ids for the untranslated question,
+            input_ids_query_llm: LLM token ids for the rendered chat
+                template ``T`` (with ``<|image_pad|>`` placeholders),
                 ``[B, query_seq]``.
             mask_query_llm: Attention mask for *input_ids_query_llm*.
+            mm_token_type_ids_query_llm: Per-token type tag for
+                *input_ids_query_llm* (0=text, 1=image), from the processor.
             labels: Short English answer token ids, ``[B, label_seq]``.
             mask_label: Attention mask for *labels*.
 
@@ -647,7 +635,7 @@ class AugmentedVisualMindMerger(nn.Module):
         llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
-            input_ids_query_llm, mask_query_llm,
+            input_ids_query_llm, mask_query_llm, mm_token_type_ids_query_llm,
         )
 
         pad_labels = torch.full_like(llm_mask, -100)
@@ -679,6 +667,7 @@ class AugmentedVisualMindMerger(nn.Module):
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
+        mm_token_type_ids_query_llm: torch.Tensor,
         tokenizer_llm,
         generation_kwargs: dict | None = None,
     ) -> list[str]:
@@ -689,8 +678,11 @@ class AugmentedVisualMindMerger(nn.Module):
             image_grid_thw: ``[B, 3]``.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
-            input_ids_query_llm: LLM token ids for the untranslated question.
+            input_ids_query_llm: LLM token ids for the rendered chat
+                template ``T`` (with ``<|image_pad|>`` placeholders).
             mask_query_llm: Attention mask for *input_ids_query_llm*.
+            mm_token_type_ids_query_llm: Per-token type tag for
+                *input_ids_query_llm* (0=text, 1=image), from the processor.
             tokenizer_llm: LLM tokenizer for decoding.
             generation_kwargs: Extra kwargs forwarded to ``model_llm.generate``.
 
@@ -700,7 +692,7 @@ class AugmentedVisualMindMerger(nn.Module):
         llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
-            input_ids_query_llm, mask_query_llm,
+            input_ids_query_llm, mask_query_llm, mm_token_type_ids_query_llm,
         )
         position_ids = self._compute_position_ids(mm_token_type_ids, image_grid_thw, llm_mask)
         llm_embeds, llm_mask, _, position_ids = _squeeze_pad(llm_embeds, llm_mask, position_ids)

@@ -69,10 +69,23 @@ def _build_user_prompt(question: str) -> str:
     return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
-def _build_chat_messages(question: str) -> list[dict]:
+def _build_chat_messages_with_image(image: Image.Image, question: str) -> list[dict]:
+    """Chat messages with the image embedded in the user turn's content.
+
+    Rendering these through `processor.apply_chat_template` (rather than
+    `tokenizer_llm.apply_chat_template` on the text alone) makes the
+    processor emit the correct number of `<|image_pad|>` placeholders --
+    sentineled with `<|vision_start|>`/`<|vision_end|>` -- for the image's
+    grid size, in the system -> user(image+question) -> assistant order
+    Qwen3-VL was instruction-tuned on. Must match
+    Stage3/evaluate.py's `_build_chat_messages_with_image` exactly.
+    """
     return [
-        {"role": "system", "content": _VQA_SYSTEM},
-        {"role": "user", "content": _build_user_prompt(question)},
+        {"role": "system", "content": [{"type": "text", "text": _VQA_SYSTEM}]},
+        {"role": "user", "content": [
+            {"type": "image", "image": image},
+            {"type": "text", "text": _build_user_prompt(question)},
+        ]},
     ]
 
 
@@ -162,16 +175,29 @@ class VQADataset(Dataset):
 def collate_vqa(
     batch: list[dict | None],
     processor: AutoProcessor,
+    tokenizer_llm: AutoTokenizer,
     min_pixels: int,
     max_pixels: int,
+    max_seq_len: int,
 ) -> dict | None:
-    """Collate a batch of VQA samples, processing images with the Qwen3-VL processor.
+    """Collate a batch of VQA samples, building `T` (with the image embedded
+    in the rendered chat template) via the Qwen3-VL processor.
+
+    Each example is rendered through `processor.apply_chat_template`
+    individually (image-pad-token count differs per example, depending on
+    that example's image grid), then the resulting `input_ids`/
+    `attention_mask`/`mm_token_type_ids` are padded to a common length
+    across the batch. Padding side/position doesn't matter for correctness
+    here: `_squeeze_pad` (see model.py) removes zero-attention-mask columns
+    before the LLM forward pass regardless of where they sit.
 
     Args:
         batch: List of sample dicts (or ``None`` for missing images).
         processor: Qwen3-VL AutoProcessor.
+        tokenizer_llm: LLM tokenizer (for `pad_token_id`).
         min_pixels: Minimum total pixel count for image resizing.
         max_pixels: Maximum total pixel count for image resizing.
+        max_seq_len: Truncation length for the rendered chat template.
 
     Returns:
         Batched dict or ``None`` if all images in the batch failed to load.
@@ -180,17 +206,41 @@ def collate_vqa(
     if not valid:
         return None
 
-    images = [x["image"] for x in valid]
-    image_inputs = processor(
-        images=images,
-        text=["" for _ in images],
-        return_tensors="pt",
-        min_pixels=min_pixels,
-        max_pixels=max_pixels,
-    )
+    pixel_values_list, grid_thw_list = [], []
+    ids_list, mask_list, mm_type_list = [], [], []
+    for x in valid:
+        messages = _build_chat_messages_with_image(x["image"], x["query"])
+        enc = processor.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt",
+            processor_kwargs={
+                "min_pixels": min_pixels, "max_pixels": max_pixels,
+                "truncation": True, "max_length": max_seq_len,
+            },
+        )
+        pixel_values_list.append(enc["pixel_values"])
+        grid_thw_list.append(enc["image_grid_thw"])
+        ids_list.append(enc["input_ids"][0])
+        mask_list.append(enc["attention_mask"][0])
+        mm_type_list.append(enc["mm_token_type_ids"][0])
+
+    n = len(valid)
+    max_len = max(t.size(0) for t in ids_list)
+    pad_id = tokenizer_llm.pad_token_id
+    input_ids_query_llm = torch.full((n, max_len), pad_id, dtype=torch.long)
+    mask_query_llm = torch.zeros((n, max_len), dtype=torch.long)
+    mm_token_type_ids_query_llm = torch.zeros((n, max_len), dtype=torch.long)
+    for i, (ids, mask, mm_type) in enumerate(zip(ids_list, mask_list, mm_type_list)):
+        seq_len = ids.size(0)
+        input_ids_query_llm[i, :seq_len] = ids
+        mask_query_llm[i, :seq_len] = mask
+        mm_token_type_ids_query_llm[i, :seq_len] = mm_type
+
     return {
-        "pixel_values": image_inputs["pixel_values"],
-        "image_grid_thw": image_inputs["image_grid_thw"],
+        "pixel_values": torch.cat(pixel_values_list, dim=0),
+        "image_grid_thw": torch.cat(grid_thw_list, dim=0),
+        "input_ids_query_llm": input_ids_query_llm,
+        "mask_query_llm": mask_query_llm,
+        "mm_token_type_ids_query_llm": mm_token_type_ids_query_llm,
         "queries": [x["query"] for x in valid],
         "answers": [x["answer"] for x in valid],
         "nllb_lang_tags": [x["nllb_lang_tag"] for x in valid],
@@ -362,7 +412,10 @@ def main(args, logger: logging.Logger) -> None:
 
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
 
-    _collate = partial(collate_vqa, processor=processor, min_pixels=args.visual_pixels, max_pixels=args.visual_pixels)
+    _collate = partial(
+        collate_vqa, processor=processor, tokenizer_llm=tokenizer_llm,
+        min_pixels=args.visual_pixels, max_pixels=args.visual_pixels, max_seq_len=args.max_seq_len,
+    )
     train_loader = DataLoader(
         VQADataset(train_rows, args.images_dir), batch_size=args.train_batch_size,
         shuffle=True, collate_fn=_collate, num_workers=args.num_workers,
@@ -394,18 +447,12 @@ def main(args, logger: logging.Logger) -> None:
 
             pixel_values = batch["pixel_values"].to(device)
             image_grid_thw = batch["image_grid_thw"].to(device)
+            input_ids_query_llm = batch["input_ids_query_llm"].to(device)
+            mask_query_llm = batch["mask_query_llm"].to(device)
+            mm_token_type_ids_query_llm = batch["mm_token_type_ids_query_llm"].to(device)
 
             input_ids_mt, mask_mt = mt_input_features(
                 batch["queries"], batch["nllb_lang_tags"], tokenizer_mt, args.max_mt_seq_len, device,
-            )
-            formatted_query = [
-                tokenizer_llm.apply_chat_template(
-                    _build_chat_messages(q), tokenize=False, add_generation_prompt=True,
-                )
-                for q in batch["queries"]
-            ]
-            input_ids_query_llm, mask_query_llm = llm_input_features(
-                formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device,
             )
             labels, mask_label = llm_input_features(
                 batch["answers"], tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device,
@@ -415,6 +462,7 @@ def main(args, logger: logging.Logger) -> None:
                 pixel_values=pixel_values, image_grid_thw=image_grid_thw,
                 input_ids_mt=input_ids_mt, attention_mask_mt=mask_mt,
                 input_ids_query_llm=input_ids_query_llm, mask_query_llm=mask_query_llm,
+                mm_token_type_ids_query_llm=mm_token_type_ids_query_llm,
                 labels=labels, mask_label=mask_label,
             )
 
@@ -439,17 +487,12 @@ def main(args, logger: logging.Logger) -> None:
                     continue
                 pixel_values = batch["pixel_values"].to(device)
                 image_grid_thw = batch["image_grid_thw"].to(device)
+                input_ids_query_llm = batch["input_ids_query_llm"].to(device)
+                mask_query_llm = batch["mask_query_llm"].to(device)
+                mm_token_type_ids_query_llm = batch["mm_token_type_ids_query_llm"].to(device)
+
                 input_ids_mt, mask_mt = mt_input_features(
                     batch["queries"], batch["nllb_lang_tags"], tokenizer_mt, args.max_mt_seq_len, device,
-                )
-                formatted_query = [
-                    tokenizer_llm.apply_chat_template(
-                        _build_chat_messages(q), tokenize=False, add_generation_prompt=True,
-                    )
-                    for q in batch["queries"]
-                ]
-                input_ids_query_llm, mask_query_llm = llm_input_features(
-                    formatted_query, tokenizer_llm, args.max_seq_len, add_bos=False, add_eos=False, device=device,
                 )
                 labels, mask_label = llm_input_features(
                     batch["answers"], tokenizer_llm, args.max_gen_len, add_bos=False, add_eos=True, device=device,
@@ -458,6 +501,7 @@ def main(args, logger: logging.Logger) -> None:
                     pixel_values=pixel_values, image_grid_thw=image_grid_thw,
                     input_ids_mt=input_ids_mt, attention_mask_mt=mask_mt,
                     input_ids_query_llm=input_ids_query_llm, mask_query_llm=mask_query_llm,
+                    mm_token_type_ids_query_llm=mm_token_type_ids_query_llm,
                     labels=labels, mask_label=mask_label,
                 )
                 val_loss += loss.item()
