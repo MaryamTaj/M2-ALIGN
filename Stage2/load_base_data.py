@@ -49,11 +49,17 @@ caption. Pass ``--skip-cc3m`` to omit this step entirely.
 
 Usage
 -----
+    # On Narval, writing straight to $SCRATCH:
     python load_base_data.py \\
         --languages fr,de,zh,ar,hi,sw \\
         --n-per-language 50000 \\
         --cc3m-samples 200000 \\
         --output-dir $SCRATCH/M2-ALIGN/Stage2/data
+
+    # On a separate machine with internet access (no $SCRATCH) -- CC3M only,
+    # writes to ./Stage2/data/cc3m/ by default; Globus-transfer that
+    # subdirectory into $SCRATCH/M2-ALIGN/Stage2/data/cc3m/ on Narval after:
+    python load_base_data.py --skip-wit --cc3m-samples 200000
 """
 from __future__ import annotations
 
@@ -72,8 +78,17 @@ import requests
 from datasets import load_dataset
 from PIL import Image
 
-# Data/outputs/logs live on $SCRATCH, not in the git checkout.
-SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage2")
+# On Narval, data/outputs/logs live on $SCRATCH, not in the git checkout --
+# but this script is also meant to run standalone on a separate machine with
+# internet access (Narval's compute nodes have none), where $SCRATCH isn't
+# set at all. Rather than depending on that env var, --output-dir and the
+# log dir both default to plain paths relative to wherever the command is
+# run from, so a bare invocation always lands next to the current directory
+# regardless of machine -- pass --output-dir explicitly (e.g.
+# $SCRATCH/M2-ALIGN/Stage2/data) to write somewhere else, such as Narval's
+# own convention once the data is Globus-transferred there.
+DEFAULT_OUTPUT_DIR = os.path.join("Stage2", "data")
+DEFAULT_LOG_DIR = os.path.join("Stage2", "logs")
 
 # How often (in rows scanned) to log progress / persist a checkpoint.
 PROGRESS_EVERY = 20_000
@@ -806,8 +821,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir", type=str,
-        default=os.path.join(SCRATCH_ROOT, "data"),
+        default=DEFAULT_OUTPUT_DIR,
         help=(
+            "Default is Stage2/data relative to the current directory (not "
+            "$SCRATCH -- this script may run on a separate machine with "
+            "internet access, where that var isn't set). Pass e.g. "
+            "$SCRATCH/M2-ALIGN/Stage2/data explicitly on a machine where it is. "
             "Each language gets its own subdirectory here: "
             "<output-dir>/<lang>/wit_pairs.jsonl and "
             "<output-dir>/<lang>/image_cache/ (unless --image-cache-dir overrides it)."
@@ -869,7 +888,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
+    logger = setup_logging(DEFAULT_LOG_DIR)
 
     lang_codes = [c.strip() for c in args.languages.split(",") if c.strip()]
     for code in lang_codes:
