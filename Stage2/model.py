@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import torch
 from torch import nn
 from transformers import M2M100Model, NllbTokenizer, Qwen3VLForConditionalGeneration
@@ -10,7 +12,8 @@ def _squeeze_pad(
     hidden_states: torch.Tensor,
     masks: torch.Tensor,
     position_ids: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    token_type_ids: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     """Remove padding columns that are zero for every example in the batch.
 
     Args:
@@ -19,11 +22,15 @@ def _squeeze_pad(
         position_ids: Optional M-RoPE position ids ``[3, batch, seq]``
             (see :meth:`VisualMindMerger._compute_position_ids`), reindexed
             identically to *hidden_states*/*masks* when given.
+        token_type_ids: Optional per-token type tag ``[batch, seq]``
+            (0=text/1=image, see :meth:`VisualMindMerger._build_prefix_raw`),
+            reindexed identically to *hidden_states*/*masks* when given.
 
     Returns:
-        ``(hidden_states, masks, keep_idx, position_ids)`` with padding
-        columns removed. ``keep_idx`` is a boolean mask over the original
-        sequence positions. ``position_ids`` is ``None`` unless supplied.
+        ``(hidden_states, masks, keep_idx, position_ids, token_type_ids)``
+        with padding columns removed. ``keep_idx`` is a boolean mask over
+        the original sequence positions. ``position_ids``/``token_type_ids``
+        are ``None`` unless supplied.
     """
     x_01 = (masks != 0).long()
     seq_len = x_01.size(1)
@@ -49,7 +56,71 @@ def _squeeze_pad(
         keep_idx_pos = keep_idx.unsqueeze(0).expand_as(position_ids)
         position_ids = position_ids[keep_idx_pos].view(3, bs, -1)
 
-    return hidden_states, masks, keep_idx, position_ids
+    if token_type_ids is not None:
+        token_type_ids = token_type_ids.gather(1, idx)
+        token_type_ids = token_type_ids[keep_idx].view(bs, -1)
+
+    return hidden_states, masks, keep_idx, position_ids, token_type_ids
+
+
+@contextlib.contextmanager
+def _deepstack_injection(
+    text_model: nn.Module,
+    visual_pos_masks: torch.Tensor | None,
+    deepstack_visual_embeds: list[torch.Tensor] | None,
+):
+    """Feed precomputed DeepStack features into *text_model*'s first forward call.
+
+    ``Qwen3VLTextModel.forward`` (``text_model`` here is
+    ``model_llm.model.language_model``) accepts ``visual_pos_masks``/
+    ``deepstack_visual_embeds`` directly and adds them into the hidden
+    states of its first few decoder layers -- Qwen3-VL's DeepStack
+    mechanism for injecting multi-scale visual detail. The outer
+    ``Qwen3VLForConditionalGeneration``/``Qwen3VLModel`` wrappers only ever
+    populate those two arguments by running the vision tower themselves
+    from a raw ``pixel_values`` input. This model never passes
+    ``pixel_values`` into that wrapper -- the vision tower already ran
+    manually in :meth:`VisualMindMerger._embed_visual`, whose output is
+    spliced into a custom ``inputs_embeds`` -- so DeepStack silently never
+    fired.
+
+    This patches ``text_model.forward`` for the duration of one top-level
+    call (a single :meth:`~VisualMindMerger.forward` pass, or one
+    ``generate()`` call) so that only the *first* invocation -- the
+    full-prompt prefill step -- receives *visual_pos_masks*/
+    *deepstack_visual_embeds*, exactly as ``Qwen3VLModel.forward`` would if
+    given ``pixel_values`` directly. Later autoregressive decode steps
+    (new tokens only, served from the KV cache, no visual positions) are
+    left untouched, mirroring how ``prepare_inputs_for_generation`` nulls
+    ``pixel_values`` after the first generation step. Assumes a single
+    prefill call (greedy/sampling decoding, no beam search).
+
+    Args:
+        text_model: ``model_llm.model.language_model`` (a ``Qwen3VLTextModel``).
+        visual_pos_masks: ``[batch, seq]`` boolean mask of image-token
+            positions in the sequence about to be fed to *text_model*, or
+            ``None``.
+        deepstack_visual_embeds: The 3 per-layer feature tensors from
+            :meth:`VisualMindMerger._embed_visual`, or ``None``.
+    """
+    if deepstack_visual_embeds is None:
+        yield
+        return
+
+    original_forward = text_model.forward
+    pending = {"visual_pos_masks": visual_pos_masks, "deepstack_visual_embeds": deepstack_visual_embeds}
+
+    def patched_forward(*args, **kwargs):
+        if pending:
+            kwargs["visual_pos_masks"] = pending.pop("visual_pos_masks")
+            kwargs["deepstack_visual_embeds"] = pending.pop("deepstack_visual_embeds")
+        return original_forward(*args, **kwargs)
+
+    text_model.forward = patched_forward
+    try:
+        yield
+    finally:
+        del text_model.forward
 
 
 class PresencePenaltyGeneratedOnly:
@@ -235,16 +306,27 @@ class VisualMindMerger(nn.Module):
         self,
         pixel_values: torch.Tensor,
         image_grid_thw: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor]]:
         """Run the vision encoder and pad the batch to a uniform token count.
+
+        ``model_llm.model.visual`` also produces ``deepstack_features`` --
+        multi-scale features from 3 intermediate vision-encoder layers that
+        Qwen3-VL's DeepStack mechanism normally injects into the LLM's
+        first 3 decoder layers at the image-token positions. These are
+        returned unpadded (flat, in the same ``sum(n_tokens)`` order as
+        *raw*) for :meth:`forward`/:meth:`generate` to feed into
+        :func:`_deepstack_injection` -- previously only ``pooler_output``
+        was used here, so DeepStack never fired for this model.
 
         Args:
             pixel_values: Preprocessed image patches ``[total_patches, C, pH, pW]``.
             image_grid_thw: Patch-grid dimensions ``[B, 3]`` (temporal, h, w).
 
         Returns:
-            ``(vis_padded, vis_mask)`` of shapes ``[B, max_vis, llm_dim]``
-            and ``[B, max_vis]`` (long, 1 = real token).
+            ``(vis_padded, vis_mask, deepstack_visual_embeds)``: the first
+            two of shapes ``[B, max_vis, llm_dim]`` and ``[B, max_vis]``
+            (long, 1 = real token); the last a 3-element list of
+            ``[sum(n_tokens), llm_dim]`` tensors.
         """
         ms = self._spatial_merge_size
         n_tokens = [
@@ -252,8 +334,10 @@ class VisualMindMerger(nn.Module):
             for g in image_grid_thw
         ]
 
-        raw = self.model_llm.model.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
+        vision_out = self.model_llm.model.visual(pixel_values, grid_thw=image_grid_thw)
+        raw = vision_out.pooler_output
         # raw: [sum(n_tokens), llm_dim]
+        deepstack_visual_embeds = list(vision_out.deepstack_features)
 
         B = image_grid_thw.size(0)
         max_vis = max(n_tokens)
@@ -266,7 +350,7 @@ class VisualMindMerger(nn.Module):
             vis_padded[i, :n] = chunk
             vis_mask[i, :n] = 1
 
-        return vis_padded, vis_mask
+        return vis_padded, vis_mask, deepstack_visual_embeds
 
     def _compute_position_ids(
         self,
@@ -307,7 +391,7 @@ class VisualMindMerger(nn.Module):
         image_grid_thw: torch.Tensor,
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[torch.Tensor]]:
         """Assemble ``[BOS] + <vis_start> + vis + <vis_end> + X_m + [end_boundary]``
         without squeeze_pad.
 
@@ -323,17 +407,20 @@ class VisualMindMerger(nn.Module):
         sequence including labels) and in :meth:`generate` (over the prefix).
 
         Returns:
-            ``(llm_embeds, llm_mask, mm_token_type_ids)`` of shapes
-            ``[B, prefix_len, llm_dim]``, ``[B, prefix_len]`` and
-            ``[B, prefix_len]`` (0=text, 1=image; see
-            :meth:`_compute_position_ids`).
+            ``(llm_embeds, llm_mask, mm_token_type_ids, deepstack_visual_embeds)``:
+            the first three of shapes ``[B, prefix_len, llm_dim]``,
+            ``[B, prefix_len]`` and ``[B, prefix_len]`` (0=text, 1=image;
+            see :meth:`_compute_position_ids`); the last passed straight
+            through from :meth:`_embed_visual` for
+            :func:`_deepstack_injection` (see :meth:`forward`/:meth:`generate`).
         """
         B = input_ids_mt.size(0)
         device = input_ids_mt.device
         dtype = self.llm_dtype
 
-        vis_padded, vis_mask = self._embed_visual(pixel_values, image_grid_thw)
+        vis_padded, vis_mask, deepstack_visual_embeds = self._embed_visual(pixel_values, image_grid_thw)
         vis_padded = vis_padded.to(dtype)
+        deepstack_visual_embeds = [feat.to(dtype) for feat in deepstack_visual_embeds]
         n_vis = vis_padded.size(1)
 
         mt_out = self.encoder_mt(
@@ -371,7 +458,7 @@ class VisualMindMerger(nn.Module):
             ],
             dim=1,
         )
-        return llm_embeds, llm_mask, mm_token_type_ids
+        return llm_embeds, llm_mask, mm_token_type_ids, deepstack_visual_embeds
 
     def forward(
         self,
@@ -398,7 +485,7 @@ class VisualMindMerger(nn.Module):
         B = input_ids_mt.size(0)
         dtype = self.llm_dtype
 
-        llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
+        llm_embeds, llm_mask, mm_token_type_ids, deepstack_visual_embeds = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
         )
@@ -412,15 +499,20 @@ class VisualMindMerger(nn.Module):
         labels_full = torch.cat([pad_labels, labels_masked], dim=1)
 
         position_ids = self._compute_position_ids(mm_token_type_ids, image_grid_thw, llm_mask)
-        llm_embeds, llm_mask, cut_idx, position_ids = _squeeze_pad(llm_embeds, llm_mask, position_ids)
-        labels_full = labels_full[cut_idx].view(B, -1)
-
-        out = self.model_llm(
-            inputs_embeds=llm_embeds,
-            attention_mask=llm_mask,
-            position_ids=position_ids,
-            labels=labels_full,
+        llm_embeds, llm_mask, cut_idx, position_ids, mm_token_type_ids = _squeeze_pad(
+            llm_embeds, llm_mask, position_ids, mm_token_type_ids
         )
+        labels_full = labels_full[cut_idx].view(B, -1)
+        visual_pos_masks = (mm_token_type_ids == 1) & (llm_mask != 0)
+
+        text_model = self.model_llm.model.language_model
+        with _deepstack_injection(text_model, visual_pos_masks, deepstack_visual_embeds):
+            out = self.model_llm(
+                inputs_embeds=llm_embeds,
+                attention_mask=llm_mask,
+                position_ids=position_ids,
+                labels=labels_full,
+            )
         return out.loss
 
     @torch.inference_mode()
@@ -446,13 +538,16 @@ class VisualMindMerger(nn.Module):
         Returns:
             List of decoded caption strings, one per batch example.
         """
-        llm_embeds, llm_mask, mm_token_type_ids = self._build_prefix_raw(
+        llm_embeds, llm_mask, mm_token_type_ids, deepstack_visual_embeds = self._build_prefix_raw(
             pixel_values, image_grid_thw,
             input_ids_mt, attention_mask_mt,
         )
         position_ids = self._compute_position_ids(mm_token_type_ids, image_grid_thw, llm_mask)
-        llm_embeds, llm_mask, _, position_ids = _squeeze_pad(llm_embeds, llm_mask, position_ids)
+        llm_embeds, llm_mask, _, position_ids, mm_token_type_ids = _squeeze_pad(
+            llm_embeds, llm_mask, position_ids, mm_token_type_ids
+        )
         prefix_len = llm_embeds.size(1)
+        visual_pos_masks = (mm_token_type_ids == 1) & (llm_mask != 0)
 
         gen_kw: dict = dict(
             inputs_embeds=llm_embeds,
@@ -465,7 +560,9 @@ class VisualMindMerger(nn.Module):
         if generation_kwargs:
             gen_kw.update(generation_kwargs)
 
-        ids = self.model_llm.generate(**gen_kw)
+        text_model = self.model_llm.model.language_model
+        with _deepstack_injection(text_model, visual_pos_masks, deepstack_visual_embeds):
+            ids = self.model_llm.generate(**gen_kw)
         new_ids = ids[:, prefix_len:] if ids.shape[1] > prefix_len else ids
         return tokenizer_llm.batch_decode(new_ids, skip_special_tokens=True,
                                           clean_up_tokenization_spaces=False)

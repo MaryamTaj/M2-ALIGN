@@ -166,7 +166,7 @@ LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
 
 ###########################################################################
-LANG=bn BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=bn sbatch --job-name=stage3b_train_vqa_bn Stage3/job-scripts/train.sh
 LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=de BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh

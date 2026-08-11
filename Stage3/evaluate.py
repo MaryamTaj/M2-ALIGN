@@ -48,7 +48,7 @@ from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer, NllbTokenizer
 from tqdm import tqdm
 
-from model import AugmentedVisualMindMerger
+from model import AugmentedVisualMindMerger, _deepstack_injection
 
 # Data/outputs/logs live on $SCRATCH, not in the git checkout.
 SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
@@ -305,7 +305,7 @@ def score_choice_loglikelihood(
         return float("-inf")
 
     with torch.autocast(device_type="cuda", dtype=amp_dtype):
-        prefix_embeds, prefix_mask, mm_token_type_ids = model._build_prefix_raw(
+        prefix_embeds, prefix_mask, mm_token_type_ids, deepstack_visual_embeds = model._build_prefix_raw(
             pixel_values, image_grid_thw, input_ids_mt, mask_mt,
             input_ids_query_llm, mask_query_llm, mm_token_type_ids_query_llm,
         )
@@ -314,9 +314,12 @@ def score_choice_loglikelihood(
         full_mask = torch.cat([prefix_mask, torch.ones_like(choice_ids)], dim=1)
         full_mm_token_type_ids = torch.cat([mm_token_type_ids, torch.zeros_like(choice_ids)], dim=1)
         position_ids = model._compute_position_ids(full_mm_token_type_ids, image_grid_thw, full_mask)
-        logits = model.model_llm(
-            inputs_embeds=full_embeds, attention_mask=full_mask, position_ids=position_ids,
-        ).logits
+        visual_pos_masks = (full_mm_token_type_ids == 1) & (full_mask != 0)
+        text_model = model.model_llm.model.language_model
+        with _deepstack_injection(text_model, visual_pos_masks, deepstack_visual_embeds):
+            logits = model.model_llm(
+                inputs_embeds=full_embeds, attention_mask=full_mask, position_ids=position_ids,
+            ).logits
 
     # Position i's logits predict token i+1, so the logit that predicts
     # choice token k sits at (prefix_len - 1 + k).
