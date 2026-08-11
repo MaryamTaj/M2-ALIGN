@@ -15,15 +15,20 @@
 # Stage 1 checkpoint ($SCRATCH/M2-ALIGN/Stage1/outputs/$LANG) and saves its own
 # checkpoint, independent of the other languages (run with LANG=bn for
 # Bengali -- same outputs/$LANG convention as everyone else, no exception).
-# Each language has its own image cache dir (Stage2/data/$LANG/image_cache),
-# matching load_image.py's per-language output layout.
+#
+# Trains on wit_pairs.jsonl (own per-language image cache) plus, if present,
+# cc3m_pairs.jsonl (shared Stage2/data/cc3m/image_cache -- same images
+# reused across every language, only the caption differs). cc3m_pairs.jsonl
+# is optional: languages whose Stage2/job-scripts/load_translated_data.sh
+# job hasn't run yet fall back to WIT-only training instead of failing.
 #
 # Usage:
 #   LANG=ru sbatch --job-name=stage2_train_ru train.sh
 #   LANG=de sbatch --job-name=stage2_train_de train.sh
 #   LANG=zh sbatch --job-name=stage2_train_zh train.sh
 #
-# Reads $SCRATCH/M2-ALIGN/Stage2/data/$LANG/wit_pairs.jsonl and
+# Reads $SCRATCH/M2-ALIGN/Stage2/data/$LANG/wit_pairs.jsonl (required),
+#       $SCRATCH/M2-ALIGN/Stage2/data/$LANG/cc3m_pairs.jsonl (optional), and
 #       $SCRATCH/M2-ALIGN/Stage1/outputs/$LANG/pytorch_model.bin
 # Saves  $SCRATCH/M2-ALIGN/Stage2/outputs/$LANG/pytorch_model.bin
 
@@ -42,7 +47,8 @@ LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/$LANG/pytorch_model.bin"
 
-DATA_PATH="$STAGE2/data/$LANG/wit_pairs.jsonl"
+WIT_DATA_PATH="$STAGE2/data/$LANG/wit_pairs.jsonl"
+CC3M_DATA_PATH="$STAGE2/data/$LANG/cc3m_pairs.jsonl"
 OUTPUT_DIR="$STAGE2/outputs/$LANG"
 
 if [ -d "$MT_PATH" ]; then
@@ -111,14 +117,24 @@ if [ ! -f "$STAGE1_MAPPING_CKPT" ]; then
   echo "       Run: LANG=$LANG sbatch Stage1/job-scripts/train.sh"
   exit 1
 fi
-if [ ! -f "$DATA_PATH" ]; then
-  echo "ERROR: Data file not found: $DATA_PATH"
-  echo "       Run load_image.py for --languages $LANG and transfer wit_pairs.jsonl + image_cache here (see the workstation+Globus step)."
+if [ ! -f "$WIT_DATA_PATH" ]; then
+  echo "ERROR: Data file not found: $WIT_DATA_PATH"
+  echo "       Run load_base_data.py for --languages $LANG and transfer wit_pairs.jsonl + image_cache here (see the workstation+Globus step)."
   exit 1
 fi
 
+DATA_PATHS=("$WIT_DATA_PATH")
+CACHE_DIRS=("$STAGE2/data/$LANG/image_cache")
+if [ -f "$CC3M_DATA_PATH" ]; then
+  DATA_PATHS+=("$CC3M_DATA_PATH")
+  CACHE_DIRS+=("$STAGE2/data/cc3m/image_cache")
+else
+  echo "NOTE: $CC3M_DATA_PATH not found -- training on WIT only."
+  echo "      Run LANG=$LANG sbatch Stage2/job-scripts/load_translated_data.sh to add CC3M."
+fi
+
 echo "=== Start Stage 2 training ($LANG) ==="
-echo "DATA_PATH=$DATA_PATH"
+echo "DATA_PATHS=${DATA_PATHS[*]}"
 echo "OUTPUT_DIR=$OUTPUT_DIR"
 echo "STAGE1_MAPPING_CKPT=$STAGE1_MAPPING_CKPT"
 echo
@@ -133,9 +149,9 @@ echo
 
 cd "$PROJECT_ROOT"
 python -u Stage2/train.py \
-  --data-path  "$DATA_PATH" \
+  --data-path  "${DATA_PATHS[@]}" \
   --output-dir "$OUTPUT_DIR" \
-  --image-cache-dir "$STAGE2/data/$LANG/image_cache" \
+  --image-cache-dir "${CACHE_DIRS[@]}" \
   --stage1-mapping-ckpt "$STAGE1_MAPPING_CKPT" \
   --mt-path    "$MT_PATH" \
   --llm-path   "$LLM_PATH" \

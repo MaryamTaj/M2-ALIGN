@@ -1,25 +1,35 @@
-"""Stage 2 WIT training: image + multilingual caption → English caption.
+"""Stage 2 training: image + multilingual caption → English caption.
 
-Trains the Mapping layer of :class:`VisualMindMerger` on WIT image-text pairs
-produced by :mod:`load_image`.  NLLB encoder and Qwen3-VL (including the
-vision tower) are frozen; only the Mapping MLP is updated.
+Trains the Mapping layer of :class:`VisualMindMerger` on image-text pairs
+produced by :mod:`load_base_data` (WIT) and :mod:`load_translated_data`
+(translated CC3M).  NLLB encoder and Qwen3-VL (including the vision tower)
+are frozen; only the Mapping MLP is updated.
 
-Input JSONL fields (from load_image.py):
+Input JSONL fields (from load_base_data.py's wit_pairs.jsonl and
+load_translated_data.py's cc3m_pairs.jsonl -- same schema, so any number of
+these can be passed together):
     image_url, caption_text, target_caption, source_language, nllb_lang_tag
 
-Images are expected to already be downloaded into ``--image-cache-dir`` by
-:mod:`load_image` — this script never touches the network, since compute
-nodes on some clusters (e.g. Narval) have no internet access.
+--data-path and --image-cache-dir both take one or more values, paired
+positionally (the Nth --data-path reads its images from the Nth
+--image-cache-dir) -- e.g. a language's wit_pairs.jsonl reads from its own
+per-language image_cache, while its cc3m_pairs.jsonl reads from the shared
+Stage2/data/cc3m/image_cache/ populated once by load_base_data.py. Images are
+expected to already be downloaded into these caches — this script never
+touches the network, since compute nodes on some clusters (e.g. Narval) have
+no internet access.
 
 Usage
 -----
     python train.py \\
         --data-path $SCRATCH/M2-ALIGN/Stage2/data/bn/wit_pairs.jsonl \\
+                     $SCRATCH/M2-ALIGN/Stage2/data/bn/cc3m_pairs.jsonl \\
+        --image-cache-dir $SCRATCH/M2-ALIGN/Stage2/data/bn/image_cache \\
+                           $SCRATCH/M2-ALIGN/Stage2/data/cc3m/image_cache \\
         --output-dir $SCRATCH/M2-ALIGN/Stage2/outputs/bn \\
         --stage1-mapping-ckpt $SCRATCH/M2-ALIGN/Stage1/outputs/bn/pytorch_model.bin \\
         --mt-path facebook/nllb-200-distilled-600M \\
-        --llm-path Qwen/Qwen3-VL-8B-Instruct \\
-        --image-cache-dir $SCRATCH/M2-ALIGN/Stage2/data/bn/image_cache
+        --llm-path Qwen/Qwen3-VL-8B-Instruct
 """
 from __future__ import annotations
 
@@ -80,27 +90,30 @@ def set_seed(seed: int) -> None:
 # ---------------------------------------------------------------------------
 
 class WITDataset(Dataset):
-    """Loads WIT JSONL pairs and reads their pre-downloaded, cached images.
+    """Loads JSONL pairs (WIT and/or translated-CC3M) and reads their
+    pre-downloaded, cached images.
 
-    Images must already be present in *cache_dir*, keyed by
-    ``sha1(image_url).jpg`` — see :func:`load_image.download_images`, which
-    populates this cache ahead of training.
+    Each row is paired with the cache directory its source file was loaded
+    with (rows from different --data-path files can come from different
+    caches, e.g. a per-language WIT cache vs. the shared CC3M cache), so
+    lookups always hit the right directory. Images must already be present
+    there, keyed by ``sha1(image_url).jpg`` — see
+    :func:`load_base_data.download_images`, which populates these caches
+    ahead of training.
 
     Args:
-        rows: List of dicts from the WIT JSONL file.
-        cache_dir: Directory containing cached images as JPEG files.
+        rows_with_cache: List of ``(row, cache_dir)`` tuples.
     """
 
-    def __init__(self, rows: list[dict], cache_dir: str) -> None:
-        self.rows = rows
-        self.cache_dir = cache_dir
+    def __init__(self, rows_with_cache: list[tuple[dict, str]]) -> None:
+        self.rows_with_cache = rows_with_cache
 
     def __len__(self) -> int:
-        return len(self.rows)
+        return len(self.rows_with_cache)
 
     def __getitem__(self, idx: int) -> dict | None:
-        row = self.rows[idx]
-        image = self._load_image(row["image_url"])
+        row, cache_dir = self.rows_with_cache[idx]
+        image = self._load_image(row["image_url"], cache_dir)
         if image is None:
             return None
         return {
@@ -110,9 +123,9 @@ class WITDataset(Dataset):
             "nllb_lang_tag": row["nllb_lang_tag"],
         }
 
-    def _load_image(self, url: str) -> Image.Image | None:
+    def _load_image(self, url: str, cache_dir: str) -> Image.Image | None:
         cache_key = hashlib.sha1(url.encode()).hexdigest()
-        cache_path = os.path.join(self.cache_dir, cache_key + ".jpg")
+        cache_path = os.path.join(cache_dir, cache_key + ".jpg")
         if not os.path.exists(cache_path):
             return None
         try:
@@ -371,16 +384,27 @@ def main(args, logger: logging.Logger) -> None:
     if device.type != "cuda":
         raise RuntimeError("train_wit.py requires CUDA.")
 
-    # Load data
-    rows: list[dict] = []
-    with open(args.data_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    random.shuffle(rows)
-    split = int(len(rows) * (1.0 - args.val_ratio))
-    train_rows, val_rows = rows[:split], rows[split:]
+    # Load data. --data-path and --image-cache-dir are paired positionally
+    # (Nth path reads its images from the Nth cache dir), so a language's
+    # wit_pairs.jsonl and cc3m_pairs.jsonl can be trained on together even
+    # though their images live in different caches.
+    if len(args.data_path) != len(args.image_cache_dir):
+        raise ValueError(
+            f"--data-path ({len(args.data_path)} values) and --image-cache-dir "
+            f"({len(args.image_cache_dir)} values) must be paired 1:1."
+        )
+    rows_with_cache: list[tuple[dict, str]] = []
+    for data_path, cache_dir in zip(args.data_path, args.image_cache_dir):
+        n_before = len(rows_with_cache)
+        with open(data_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    rows_with_cache.append((json.loads(line), cache_dir))
+        logger.info("Loaded %d rows from %s (cache: %s)", len(rows_with_cache) - n_before, data_path, cache_dir)
+    random.shuffle(rows_with_cache)
+    split = int(len(rows_with_cache) * (1.0 - args.val_ratio))
+    train_rows, val_rows = rows_with_cache[:split], rows_with_cache[split:]
     logger.info("Dataset: train=%d val=%d", len(train_rows), len(val_rows))
 
     # Tokenizers and processor
@@ -419,14 +443,14 @@ def main(args, logger: logging.Logger) -> None:
         max_pixels=args.visual_pixels,
     )
     train_loader = DataLoader(
-        WITDataset(train_rows, args.image_cache_dir),
+        WITDataset(train_rows),
         batch_size=args.train_batch_size,
         shuffle=True,
         collate_fn=_collate,
         num_workers=args.num_workers,
     )
     val_loader = DataLoader(
-        WITDataset(val_rows, args.image_cache_dir),
+        WITDataset(val_rows),
         batch_size=args.eval_batch_size,
         shuffle=False,
         collate_fn=_collate,
@@ -567,15 +591,19 @@ def main(args, logger: logging.Logger) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stage 2 WIT visual grounding training.")
-    parser.add_argument("--data-path", type=str, required=True,
-                        help="Path to wit_pairs.jsonl from load_wit_data.py.")
+    parser.add_argument("--data-path", type=str, required=True, nargs="+",
+                        help="One or more paths to JSONL pair files (e.g. wit_pairs.jsonl, "
+                             "cc3m_pairs.jsonl from load_base_data.py / load_translated_data.py). "
+                             "Paired positionally with --image-cache-dir.")
     parser.add_argument("--output-dir", type=str, required=True,
                         help="Directory for checkpoints.")
     parser.add_argument("--stage1-mapping-ckpt", type=str, default=None,
                         help="Stage 1 mapping checkpoint to warm-start from.")
     parser.add_argument("--mt-path", type=str, default="facebook/nllb-200-distilled-600M")
     parser.add_argument("--llm-path", type=str, default="Qwen/Qwen3-VL-8B-Instruct")
-    parser.add_argument("--image-cache-dir", type=str, default=os.path.join(SCRATCH_ROOT, "data", "image_cache"))
+    parser.add_argument("--image-cache-dir", type=str, nargs="+",
+                        default=[os.path.join(SCRATCH_ROOT, "data", "image_cache")],
+                        help="Cache dir for each --data-path, in the same order/count.")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--epochs", type=int, default=3)

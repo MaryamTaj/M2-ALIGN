@@ -34,7 +34,7 @@ LANG_TO_NLLB = {
     "Chinese": "zho_Hans",
     # Low-resource VQA-track languages (CVQA eval; Yoruba dropped for now --
     # WorldCuisines has no Yoruba coverage).
-    # Rounding out the language set (see Stage2/load_image.py's
+    # Rounding out the language set (see Stage2/load_base_data.py's
     # WIT_TO_NLLB, which already covers these): CVQA is these languages'
     # VQA-eval path (no MGSM/MSVAMP/xGQA coverage for any of them).
     "Portuguese": "por_Latn",
@@ -80,7 +80,7 @@ def download_language(
     logger.info("Loading NLLB config=%s split=%s target=%d samples", config, split, n_samples)
     # allenai/nllb ships a loading script (nllb.py) with no script-free parquet mirror
     # available; datasets>=4.0 removed script execution entirely, so this requires
-    # datasets<4.0 with trust_remote_code=True (see Stage2/load_image.py's docstring for
+    # datasets<4.0 with trust_remote_code=True (see Stage2/load_base_data.py's docstring for
     # the same class of problem with the old google/WIT, which did have a parquet mirror
     # to migrate to -- this dataset doesn't).
     ds = load_dataset("allenai/nllb", config, split=split, streaming=streaming, trust_remote_code=True)

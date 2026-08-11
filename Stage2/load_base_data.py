@@ -1,7 +1,8 @@
-"""Prepare WIT image-captioning pairs for Stage 2 visual grounding training.
+"""Prepare Stage 2 visual grounding training data: WIT pairs + an English
+CC3M sample (the latter translated per-language by ``load_translated_data.py``).
 
-Strategy
---------
+WIT strategy
+------------
 ``wikimedia/wit_base`` (the parquet-native mirror of Google's WIT dataset)
 dedupes rows by image: each row's ``wit_features`` list already holds the
 per-language caption entries for that one image. So the English/target-
@@ -30,11 +31,28 @@ keeps train.py free of any network dependency, which matters on clusters
 fails to download are dropped from the JSONL. Pass ``--skip-download`` to
 only write the JSONL.
 
+CC3M strategy
+-------------
+WIT's per-language caption coverage is native-Wikipedia-editor-limited --
+under-resourced languages (jv, mn, si, ga) top out at a few thousand pairs
+no matter how much of the stream is scanned. Conceptual Captions 3M
+(``google-research-datasets/conceptual_captions``, config ``unlabeled``) has
+no such ceiling since it's English-only and gets machine-translated per
+language by ``load_translated_data.py`` (mirroring Stage 3's GQA -> NLLB
+pipeline), so this step only needs to sample and cache ``--cc3m-samples``
+English (image_url, caption) rows once. The same images are reused across
+every target language's translation, so they're downloaded into a single
+shared cache -- ``<output-dir>/cc3m/image_cache`` -- not a per-language one.
+
+Output: ``<output-dir>/cc3m/english.jsonl`` with fields id, image_url,
+caption. Pass ``--skip-cc3m`` to omit this step entirely.
+
 Usage
 -----
-    python load_image.py \\
+    python load_base_data.py \\
         --languages fr,de,zh,ar,hi,sw \\
         --n-per-language 50000 \\
+        --cc3m-samples 200000 \\
         --output-dir $SCRATCH/M2-ALIGN/Stage2/data
 """
 from __future__ import annotations
@@ -116,6 +134,20 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "si": "Sinhalese",
     "ga": "Irish",
 }
+
+# ---------------------------------------------------------------------------
+# CC3M (English-only; translated per-language by load_translated_data.py)
+# ---------------------------------------------------------------------------
+
+# Parquet-native mirror -- avoids the trust_remote_code removal in
+# datasets>=4.0 that broke the original script-based google/conceptual_captions
+# loader (same class of problem _load_wit_base's docstring already flags for
+# google/WIT). Config "unlabeled" is the standard 3.3M (image_url, caption)
+# Conceptual Captions split; "labeled" is a different, smaller subset.
+CC3M_DATASET_ID = "google-research-datasets/conceptual_captions"
+CC3M_CONFIG = "unlabeled"
+CC3M_SPLIT = "train"
+DEFAULT_CC3M_SAMPLES = 200_000
 
 # Unicode block ranges keyed by the script suffix of the NLLB tag (e.g.
 # "ben_Beng" -> "Beng"). Only scripts visually distinguishable from Latin
@@ -701,8 +733,63 @@ def print_coverage_table(
     print(f"\n'+' = row cap hit; true image count and coverage may be higher.\n")
 
 
+# ---------------------------------------------------------------------------
+# CC3M (English-only base sample; translated per-language by
+# load_translated_data.py)
+# ---------------------------------------------------------------------------
+
+def sample_cc3m(
+    n_samples: int,
+    seed: int,
+    logger: logging.Logger,
+) -> list[dict]:
+    """Sample *n_samples* (image_url, caption) rows from Conceptual Captions.
+
+    Unlike WIT (which needs a full streamed pass to join per-language
+    captions on English), CC3M is a single flat English table -- both columns
+    are strings, so loading it in full (not streaming) is cheap and lets rows
+    be shuffled and sampled the same way Stage 3's ``sample_gqa`` does,
+    instead of taking a stream prefix that could reflect upload order.
+
+    Args:
+        n_samples: Target number of (image_url, caption) rows.
+        seed: Random seed for shuffling/sampling.
+        logger: Logger instance.
+
+    Returns:
+        List of dicts with keys ``image_url`` and ``caption``.
+    """
+    logger.info("Loading %s [%s/%s] ...", CC3M_DATASET_ID, CC3M_CONFIG, CC3M_SPLIT)
+    ds = load_dataset(CC3M_DATASET_ID, CC3M_CONFIG, split=CC3M_SPLIT)
+    logger.info("CC3M %s/%s: %d rows total", CC3M_CONFIG, CC3M_SPLIT, len(ds))
+
+    rng = random.Random(seed)
+    indices = list(range(len(ds)))
+    rng.shuffle(indices)
+
+    seen_urls: set[str] = set()
+    rows: list[dict] = []
+    for i in indices:
+        r = ds[i]
+        url = (r.get("image_url") or "").strip()
+        caption = (r.get("caption") or "").strip()
+        if not url or not caption or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        rows.append({
+            "id": hashlib.sha1(url.encode()).hexdigest(),
+            "image_url": url,
+            "caption": caption,
+        })
+        if len(rows) >= n_samples:
+            break
+
+    logger.info("Sampled %d CC3M rows (target %d)", len(rows), n_samples)
+    return rows
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare WIT Stage 2 training pairs.")
+    parser = argparse.ArgumentParser(description="Prepare WIT + CC3M Stage 2 base training data.")
     parser.add_argument(
         "--languages", type=str, default="fr,de,zh,ar,hi,sw",
         help="Comma-separated ISO 639-1 language codes (must be in WIT_TO_NLLB).",
@@ -763,6 +850,23 @@ def main() -> None:
         help="Only write wit_pairs.jsonl; don't download images. Useful when the "
              "images will be fetched separately or are already cached.",
     )
+    parser.add_argument(
+        "--skip-cc3m", action="store_true",
+        help="Skip the CC3M English sample entirely (WIT-only run).",
+    )
+    parser.add_argument(
+        "--skip-wit", action="store_true",
+        help="Skip the WIT collection entirely (CC3M-only run) -- use when "
+             "wit_pairs.jsonl already exists and only CC3M needs to be added, "
+             "so the full wikimedia/wit_base stream isn't rescanned for nothing.",
+    )
+    parser.add_argument(
+        "--cc3m-samples", type=int, default=DEFAULT_CC3M_SAMPLES,
+        help="Target number of English (image_url, caption) rows to sample from "
+             "CC3M, shared across every language once translated (default 200 000, "
+             "sized up from the actual training target since some fraction of "
+             "CC3M's ~8-year-old image URLs will be dead by download time).",
+    )
     args = parser.parse_args()
 
     logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
@@ -783,29 +887,53 @@ def main() -> None:
         analyze_attribution_script(lang_codes, args.max_rows, logger)
         return
 
-    # One stream pass over WIT collects every requested language at once
-    # (see build_language_pairs); only the output below is per-language.
-    pairs_by_lang = build_language_pairs(
-        lang_codes, args.n_per_language, args.seed, logger, args.output_dir,
-    )
+    if not args.skip_wit:
+        # One stream pass over WIT collects every requested language at once
+        # (see build_language_pairs); only the output below is per-language.
+        pairs_by_lang = build_language_pairs(
+            lang_codes, args.n_per_language, args.seed, logger, args.output_dir,
+        )
 
-    for code in lang_codes:
-        rows = pairs_by_lang[code]
-        lang_dir = os.path.join(args.output_dir, code)
+        for code in lang_codes:
+            rows = pairs_by_lang[code]
+            lang_dir = os.path.join(args.output_dir, code)
+
+            if not args.skip_download:
+                cache_dir = args.image_cache_dir or os.path.join(lang_dir, "image_cache")
+                ok_urls = download_images(rows, cache_dir, args.download_workers, logger)
+                before = len(rows)
+                rows = [row for row in rows if row["image_url"] in ok_urls]
+                logger.info(
+                    "%s: kept %d/%d pairs with a successfully cached image",
+                    WIT_CODE_TO_NAME[code], len(rows), before,
+                )
+
+            out_path = os.path.join(lang_dir, "wit_pairs.jsonl")
+            _write_jsonl(out_path, rows, logger)
+            logger.info("%s: %d pairs -> %s", WIT_CODE_TO_NAME[code], len(rows), out_path)
+    else:
+        logger.info("--skip-wit set: leaving existing wit_pairs.jsonl files untouched.")
+
+    if not args.skip_cc3m:
+        cc3m_dir = os.path.join(args.output_dir, "cc3m")
+        cc3m_rows = sample_cc3m(args.cc3m_samples, args.seed, logger)
 
         if not args.skip_download:
-            cache_dir = args.image_cache_dir or os.path.join(lang_dir, "image_cache")
-            ok_urls = download_images(rows, cache_dir, args.download_workers, logger)
-            before = len(rows)
-            rows = [row for row in rows if row["image_url"] in ok_urls]
+            # One shared cache: the same CC3M images are translated into every
+            # target language by load_translated_data.py, so downloading them
+            # per-language (like WIT) would just repeat the same fetches.
+            cache_dir = os.path.join(cc3m_dir, "image_cache")
+            ok_urls = download_images(cc3m_rows, cache_dir, args.download_workers, logger)
+            before = len(cc3m_rows)
+            cc3m_rows = [row for row in cc3m_rows if row["image_url"] in ok_urls]
             logger.info(
-                "%s: kept %d/%d pairs with a successfully cached image",
-                WIT_CODE_TO_NAME[code], len(rows), before,
+                "CC3M: kept %d/%d rows with a successfully cached image",
+                len(cc3m_rows), before,
             )
 
-        out_path = os.path.join(lang_dir, "wit_pairs.jsonl")
-        _write_jsonl(out_path, rows, logger)
-        logger.info("%s: %d pairs -> %s", WIT_CODE_TO_NAME[code], len(rows), out_path)
+        out_path = os.path.join(cc3m_dir, "english.jsonl")
+        _write_jsonl(out_path, cc3m_rows, logger)
+        logger.info("CC3M: %d rows -> %s", len(cc3m_rows), out_path)
 
 
 if __name__ == "__main__":

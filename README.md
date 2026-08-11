@@ -84,12 +84,29 @@ LANG=ga sbatch --job-name=stage1_train_ga Stage1/job-scripts/train.sh
 # (ON WORKSTATION ONLY)####################################################
 tmux new-window -t M2ALIGN -n Stage2
 source .venv/bin/activate
-python Stage2/load_image.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
+python Stage2/load_base_data.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
 
-python Stage2/load_image.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
+python Stage2/load_base_data.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --cc3m-samples 200000 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
 
+python Stage2/load_base_data.py \
+    --skip-wit \
+    --cc3m-samples 200000 \
+    --output-dir $SCRATCH/M2-ALIGN/Stage2/data
+    
 // Transfer to /scratch/tajm/M2-ALIGN/Stage2/data/ using Globus.
 ###########################################################################
+LANG=bn sbatch --job-name=stage2_load_translated_data_bn Stage2/job-scripts/load_translated_data.sh
+LANG=ru sbatch --job-name=stage2_load_translated_data_ru Stage2/job-scripts/load_translated_data.sh
+LANG=de sbatch --job-name=stage2_load_translated_data_de Stage2/job-scripts/load_translated_data.sh
+LANG=zh sbatch --job-name=stage2_load_translated_data_zh Stage2/job-scripts/load_translated_data.sh
+LANG=pt sbatch --job-name=stage2_load_translated_data_pt Stage2/job-scripts/load_translated_data.sh
+LANG=id sbatch --job-name=stage2_load_translated_data_id Stage2/job-scripts/load_translated_data.sh
+LANG=ko sbatch --job-name=stage2_load_translated_data_ko Stage2/job-scripts/load_translated_data.sh
+LANG=jv sbatch --job-name=stage2_load_translated_data_jv Stage2/job-scripts/load_translated_data.sh
+LANG=mn sbatch --job-name=stage2_load_translated_data_mn Stage2/job-scripts/load_translated_data.sh
+LANG=si sbatch --job-name=stage2_load_translated_data_si Stage2/job-scripts/load_translated_data.sh
+LANG=ga sbatch --job-name=stage2_load_translated_data_ga Stage2/job-scripts/load_translated_data.sh
+
 LANG=bn sbatch --job-name=stage2_train_bn Stage2/job-scripts/train.sh
 LANG=ru sbatch --job-name=stage2_train_ru Stage2/job-scripts/train.sh
 LANG=de sbatch --job-name=stage2_train_de Stage2/job-scripts/train.sh
