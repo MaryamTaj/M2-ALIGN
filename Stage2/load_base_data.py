@@ -314,6 +314,15 @@ _DOWNLOAD_HEADERS = {
 _RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 _MAX_RETRIES = 5
 
+# ``requests``' ``timeout=`` only bounds inactivity *between* reads, not the
+# whole request -- a host that trickles a byte every few seconds never trips
+# it and can wedge a worker thread indefinitely (observed: a handful of
+# stuck threads out of 4 workers collapsed throughput ~90x over several
+# hours without the process ever erroring or exiting). Streaming the body
+# and checking elapsed wall-clock time on every chunk gives each attempt a
+# hard cap regardless of how the bytes trickle in.
+_DOWNLOAD_DEADLINE_S = 20
+
 
 def _download_one_image(url: str, cache_dir: str) -> str | None:
     """Fetch *url* into the on-disk image cache if not already there.
@@ -332,9 +341,17 @@ def _download_one_image(url: str, cache_dir: str) -> str | None:
         return None
     for attempt in range(_MAX_RETRIES):
         try:
-            resp = requests.get(url, timeout=15, headers=_DOWNLOAD_HEADERS)
-            resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            deadline = time.monotonic() + _DOWNLOAD_DEADLINE_S
+            with requests.get(
+                url, timeout=15, headers=_DOWNLOAD_HEADERS, stream=True,
+            ) as resp:
+                resp.raise_for_status()
+                chunks = []
+                for chunk in resp.iter_content(chunk_size=65536):
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("exceeded wall-clock download deadline")
+                    chunks.append(chunk)
+            img = Image.open(io.BytesIO(b"".join(chunks))).convert("RGB")
             tmp_path = path + ".tmp"
             img.save(tmp_path, format="JPEG", quality=85)
             os.replace(tmp_path, path)
