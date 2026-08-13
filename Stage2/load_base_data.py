@@ -67,6 +67,7 @@ import argparse
 import concurrent.futures
 import hashlib
 import io
+import itertools
 import json
 import logging
 import os
@@ -368,6 +369,37 @@ def _download_one_image(url: str, cache_dir: str) -> str | None:
     return "HTTP 429 (exhausted retries)"
 
 
+def _known_bad_urls_path(cache_dir: str) -> str:
+    return os.path.join(cache_dir, ".failed_urls.txt")
+
+
+def _load_known_bad_urls(cache_dir: str) -> set[str]:
+    """URLs a previous run already exhausted ``_MAX_RETRIES`` on.
+
+    Not cached (no image on disk to check for), so without this they'd be
+    re-attempted -- and re-pay the same connect/read timeouts -- on every
+    future run that samples them again. CC3M's URLs are ~8 years old, so a
+    failure today is overwhelmingly likely to still be a failure next
+    week; treating it as permanent (until this file is deleted by hand) is
+    a deliberate trade against occasionally skipping a URL that would have
+    recovered.
+    """
+    path = _known_bad_urls_path(cache_dir)
+    if not os.path.exists(path):
+        return set()
+    with open(path, encoding="utf-8") as f:
+        return {line.strip() for line in f if line.strip()}
+
+
+def _append_known_bad_urls(cache_dir: str, urls: list[str], logger: logging.Logger) -> None:
+    if not urls:
+        return
+    with open(_known_bad_urls_path(cache_dir), "a", encoding="utf-8") as f:
+        for url in urls:
+            f.write(url + "\n")
+    logger.info("Recorded %d newly-failed URLs -> %s", len(urls), _known_bad_urls_path(cache_dir))
+
+
 def download_images(
     rows: list[dict],
     cache_dir: str,
@@ -378,7 +410,9 @@ def download_images(
 
     Runs downloads concurrently across *max_workers* threads. Already-cached
     files are skipped, so re-running after a partial/interrupted run only
-    fetches what's still missing.
+    fetches what's still missing. URLs a previous call already exhausted
+    retries on (see :func:`_load_known_bad_urls`) are skipped the same way,
+    without a network call.
 
     Args:
         rows: Pair dicts, each with an ``image_url`` field.
@@ -390,12 +424,18 @@ def download_images(
         The subset of URLs that ended up successfully cached.
     """
     os.makedirs(cache_dir, exist_ok=True)
-    urls = sorted({row["image_url"] for row in rows})
-    logger.info("Downloading %d unique images -> %s", len(urls), cache_dir)
+    all_urls = sorted({row["image_url"] for row in rows})
+    known_bad = _load_known_bad_urls(cache_dir)
+    urls = [u for u in all_urls if u not in known_bad]
+    logger.info(
+        "Downloading %d unique images -> %s (%d skipped, already known to fail)",
+        len(urls), cache_dir, len(all_urls) - len(urls),
+    )
 
     ok: set[str] = set()
     done = 0
     failure_counts: dict[str, int] = {}
+    new_failures: list[str] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(_download_one_image, url, cache_dir): url for url in urls}
         for future in concurrent.futures.as_completed(futures):
@@ -406,13 +446,16 @@ def download_images(
                 ok.add(url)
             else:
                 failure_counts[reason] = failure_counts.get(reason, 0) + 1
+                new_failures.append(url)
             if done % PROGRESS_EVERY == 0 or done == len(urls):
                 logger.info(
                     "Downloaded %d/%d images (%d failed so far)",
                     done, len(urls), done - len(ok),
                 )
 
-    logger.info("Image download complete: %d/%d succeeded", len(ok), len(urls))
+    _append_known_bad_urls(cache_dir, new_failures, logger)
+
+    logger.info("Image download complete: %d/%d succeeded", len(ok), len(all_urls))
     if failure_counts:
         top = sorted(failure_counts.items(), key=lambda kv: -kv[1])[:10]
         logger.info("Failure reasons (top %d): %s", len(top), dict(top))
@@ -770,26 +813,17 @@ def print_coverage_table(
 # load_translated_data.py)
 # ---------------------------------------------------------------------------
 
-def sample_cc3m(
-    n_samples: int,
-    seed: int,
-    logger: logging.Logger,
-) -> list[dict]:
-    """Sample *n_samples* (image_url, caption) rows from Conceptual Captions.
+def _iter_cc3m_candidates(seed: int, logger: logging.Logger):
+    """Yield deduped CC3M ``{id, image_url, caption}`` dicts one at a time,
+    in a fixed pseudo-random order determined by *seed*.
 
     Unlike WIT (which needs a full streamed pass to join per-language
     captions on English), CC3M is a single flat English table -- both columns
     are strings, so loading it in full (not streaming) is cheap and lets rows
-    be shuffled and sampled the same way Stage 3's ``sample_gqa`` does,
-    instead of taking a stream prefix that could reflect upload order.
-
-    Args:
-        n_samples: Target number of (image_url, caption) rows.
-        seed: Random seed for shuffling/sampling.
-        logger: Logger instance.
-
-    Returns:
-        List of dicts with keys ``image_url`` and ``caption``.
+    be shuffled the same way Stage 3's ``sample_gqa`` does, instead of taking
+    a stream prefix that could reflect upload order. Lazy (a generator, not a
+    list) so callers can pull exactly as many candidates as they end up
+    needing instead of committing to a fixed sample size upfront.
     """
     logger.info("Loading %s [%s/%s] ...", CC3M_DATASET_ID, CC3M_CONFIG, CC3M_SPLIT)
     ds = load_dataset(CC3M_DATASET_ID, CC3M_CONFIG, split=CC3M_SPLIT)
@@ -800,7 +834,6 @@ def sample_cc3m(
     rng.shuffle(indices)
 
     seen_urls: set[str] = set()
-    rows: list[dict] = []
     for i in indices:
         r = ds[i]
         url = (r.get("image_url") or "").strip()
@@ -808,16 +841,74 @@ def sample_cc3m(
         if not url or not caption or url in seen_urls:
             continue
         seen_urls.add(url)
-        rows.append({
+        yield {
             "id": hashlib.sha1(url.encode()).hexdigest(),
             "image_url": url,
             "caption": caption,
-        })
+        }
+
+
+def sample_cc3m(
+    n_samples: int,
+    seed: int,
+    logger: logging.Logger,
+) -> list[dict]:
+    """Sample the first *n_samples* CC3M candidates, unfiltered by whether
+    their image is actually downloadable. Used only for ``--skip-download``
+    runs, where there's no download step to filter on anyway; see
+    :func:`sample_and_download_cc3m` for the download-aware version used
+    otherwise.
+    """
+    rows: list[dict] = []
+    for row in _iter_cc3m_candidates(seed, logger):
+        rows.append(row)
         if len(rows) >= n_samples:
             break
-
     logger.info("Sampled %d CC3M rows (target %d)", len(rows), n_samples)
     return rows
+
+
+# How many CC3M candidates to pull and attempt per round in
+# sample_and_download_cc3m -- large enough to keep the thread pool busy,
+# small enough that "how many more do we actually need" gets re-checked
+# often instead of guessing one giant upfront batch.
+CC3M_DOWNLOAD_BATCH = 20_000
+
+
+def sample_and_download_cc3m(
+    target: int,
+    seed: int,
+    cache_dir: str,
+    max_workers: int,
+    logger: logging.Logger,
+) -> list[dict]:
+    """Pull CC3M candidates and download their images in batches until
+    *target* images have actually downloaded successfully (or the dataset
+    is exhausted), instead of sampling one fixed, guessed-at-upfront
+    candidate pool and keeping whatever fraction of it survives.
+
+    Already-cached images and known-dead URLs (see :func:`download_images`)
+    count/are skipped for free, with no network call -- so re-running with a
+    target at or below what a previous run already resolved (successes or
+    permanent failures) finishes with little to no new network activity.
+    """
+    candidates = _iter_cc3m_candidates(seed, logger)
+    successes: list[dict] = []
+
+    while len(successes) < target:
+        batch = list(itertools.islice(candidates, CC3M_DOWNLOAD_BATCH))
+        if not batch:
+            logger.warning(
+                "CC3M: dataset exhausted with only %d/%d target images downloaded.",
+                len(successes), target,
+            )
+            break
+
+        ok_urls = download_images(batch, cache_dir, max_workers, logger)
+        successes.extend(row for row in batch if row["image_url"] in ok_urls)
+        logger.info("CC3M: %d/%d target images downloaded so far", len(successes), target)
+
+    return successes[:target]
 
 
 def main() -> None:
@@ -898,10 +989,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--cc3m-samples", type=int, default=DEFAULT_CC3M_SAMPLES,
-        help="Target number of English (image_url, caption) rows to sample from "
-             "CC3M, shared across every language once translated (default 200 000, "
-             "sized up from the actual training target since some fraction of "
-             "CC3M's ~8-year-old image URLs will be dead by download time).",
+        help="Target number of English (image_url, caption) rows with a "
+             "successfully downloaded image, shared across every language once "
+             "translated (default 200 000). Candidates are pulled from CC3M and "
+             "downloaded in batches until exactly this many succeed -- pass the "
+             "number of rows you actually want, not an inflated upper bound to "
+             "absorb dead CC3M URLs; a --skip-download run instead samples "
+             "exactly this many candidates unfiltered, since there's no download "
+             "step to check against.",
     )
     args = parser.parse_args()
 
@@ -952,19 +1047,16 @@ def main() -> None:
 
     if not args.skip_cc3m:
         cc3m_dir = os.path.join(args.output_dir, "cc3m")
-        cc3m_rows = sample_cc3m(args.cc3m_samples, args.seed, logger)
 
-        if not args.skip_download:
+        if args.skip_download:
+            cc3m_rows = sample_cc3m(args.cc3m_samples, args.seed, logger)
+        else:
             # One shared cache: the same CC3M images are translated into every
             # target language by load_translated_data.py, so downloading them
             # per-language (like WIT) would just repeat the same fetches.
             cache_dir = os.path.join(cc3m_dir, "image_cache")
-            ok_urls = download_images(cc3m_rows, cache_dir, args.download_workers, logger)
-            before = len(cc3m_rows)
-            cc3m_rows = [row for row in cc3m_rows if row["image_url"] in ok_urls]
-            logger.info(
-                "CC3M: kept %d/%d rows with a successfully cached image",
-                len(cc3m_rows), before,
+            cc3m_rows = sample_and_download_cc3m(
+                args.cc3m_samples, args.seed, cache_dir, args.download_workers, logger,
             )
 
         out_path = os.path.join(cc3m_dir, "english.jsonl")
