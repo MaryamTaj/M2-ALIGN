@@ -129,9 +129,16 @@ class WITDataset(Dataset):
         if not os.path.exists(cache_path):
             return None
         try:
-            return Image.open(cache_path).convert("RGB")
+            image = Image.open(cache_path).convert("RGB")
         except Exception:
             return None
+        # Qwen2-VL's smart_resize() hard-rejects aspect ratios > 200:1; a few
+        # cached CC3M images (banners/tracking pixels) exceed that and would
+        # otherwise crash the DataLoader worker mid-training.
+        width, height = image.size
+        if max(width, height) / min(width, height) > 200:
+            return None
+        return image
 
 
 # ---------------------------------------------------------------------------

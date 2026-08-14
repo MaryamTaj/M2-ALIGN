@@ -86,7 +86,7 @@ tmux new-window -t M2ALIGN -n Stage2
 source .venv/bin/activate
 python Stage2/load_base_data.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
 
-python Stage2/load_base_data.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --cc3m-samples 100000 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
+python Stage2/load_base_data.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --cc3m-samples 50000 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
 
 // Transfer to /scratch/tajm/M2-ALIGN/Stage2/data/ using Globus.
 ###########################################################################
@@ -178,7 +178,7 @@ LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
 
 ###########################################################################
-LANG=bn sbatch --job-name=stage3b_train_vqa_bn Stage3/job-scripts/train.sh
+LANG=bn BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=de BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
