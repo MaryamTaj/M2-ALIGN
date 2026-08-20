@@ -24,12 +24,18 @@
 #   sbatch --export=BENCHMARK=worldcuisines_task2,LANG=jv        evaluate.sh
 #
 # Optional: sbatch --export=BENCHMARK=xgqa,LANG=bn,MAX_EXAMPLES=50 evaluate.sh
+#
+# Optional: sbatch --export=BENCHMARK=xgqa,LANG=bn,RESULTS_JSONL=1 evaluate.sh
+#   writes one JSON line per example (row + pred/correct) to
+#   $DATA_ROOT/Baseline/results/$BENCHMARK/$LANG.jsonl -- pair with a
+#   Stage3 run's --results-jsonl for Stage3/analysis/qualitative_cases.py.
 
 set -euo pipefail
 
 BENCHMARK="${BENCHMARK:-xgqa}"
 LANG="${LANG:-bn}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
+RESULTS_JSONL="${RESULTS_JSONL:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 
@@ -110,6 +116,11 @@ if [ -n "$MAX_EXAMPLES" ]; then
 fi
 if [ "$BENCHMARK" = "xgqa" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --images-dir $GQA_IMAGES_DIR"
+fi
+if [ -n "$RESULTS_JSONL" ]; then
+  RESULTS_PATH="$DATA_ROOT/Baseline/results/$BENCHMARK/$LANG.jsonl"
+  EXTRA_ARGS="$EXTRA_ARGS --results-jsonl $RESULTS_PATH"
+  echo "RESULTS_JSONL=$RESULTS_PATH"
 fi
 
 echo "=== Start baseline VQA evaluation: $BENCHMARK/$LANG ==="

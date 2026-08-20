@@ -65,6 +65,7 @@ cvqa           -- multiple-choice dataset, but scored **open-ended via
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -415,6 +416,41 @@ def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Per-example result logging
+# ---------------------------------------------------------------------------
+
+def _open_results_writer(results_path: str | None):
+    """Open *results_path* for writing, creating its parent dir if needed.
+
+    Returns a context manager yielding the open file, or
+    :func:`contextlib.nullcontext` (yielding ``None``) when *results_path*
+    is ``None`` -- callers can then unconditionally check ``if rf is not
+    None`` without a separate code path for the "not requested" case. Used
+    by Stage3/analysis/aggregate_breakdown.py, worldcuisines_task_comparison.py
+    and qualitative_cases.py, all of which read this file back as JSONL.
+    """
+    if results_path is None:
+        return contextlib.nullcontext()
+    os.makedirs(os.path.dirname(results_path) or ".", exist_ok=True)
+    return open(results_path, "w", encoding="utf-8")
+
+
+def _write_result(rf, row: dict, **fields) -> None:
+    """Append one JSON-line record to *rf* (a no-op if *rf* is ``None``).
+
+    Starts from a copy of *row* -- so every metadata field the loader
+    attaches (question types, category, prompt_type, ...) is carried
+    through automatically without evaluate.py needing to know their names
+    -- then overlays *fields* (pred/correct/etc.).
+    """
+    if rf is None:
+        return
+    record = dict(row)
+    record.update(fields)
+    rf.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+# ---------------------------------------------------------------------------
 # Evaluation loops
 # ---------------------------------------------------------------------------
 
@@ -425,26 +461,29 @@ def evaluate_open_ended(
     model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
     max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
     logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     nllb_code = NLLB_CODES[lang]
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"open-ended/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        prompt = build_open_ended_prompt(row["query"])
-        pred = generate_answer(
-            image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
-            model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
-            max_new_tokens=16, visual_pixels=visual_pixels,
-            max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
-        )
-        ok = open_ended_correct(pred, row["answer"])
-        correct += int(ok)
-        if idx < 5:
-            logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"open-ended/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            prompt = build_open_ended_prompt(row["query"])
+            pred = generate_answer(
+                image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
+                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                max_new_tokens=16, visual_pixels=visual_pixels,
+                max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+            )
+            ok = open_ended_correct(pred, row["answer"])
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, correct=bool(ok))
+            if idx < 5:
+                logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -457,6 +496,7 @@ def evaluate_worldcuisines_open_ended(
     model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
     max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
     logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     """Same generation path as `evaluate_open_ended` (xGQA) -- system message,
     `_VQA_SYSTEM` -- but `build_worldcuisines_prompt` wrapping (no forced
@@ -470,24 +510,26 @@ def evaluate_worldcuisines_open_ended(
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        prompt = build_worldcuisines_prompt(row["query"])
-        pred = generate_answer(
-            image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
-            model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
-            max_new_tokens=16, visual_pixels=visual_pixels,
-            max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
-        )
-        ok = worldcuisines_correct(pred, row["answers"])
-        correct += int(ok)
-        if idx < 5:
-            logger.info(
-                "idx=%d question=%r pred=%r targets=%r ok=%s",
-                idx, row["query"][:80], pred, row["answers"], ok,
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            prompt = build_worldcuisines_prompt(row["query"])
+            pred = generate_answer(
+                image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
+                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                max_new_tokens=16, visual_pixels=visual_pixels,
+                max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
             )
+            ok = worldcuisines_correct(pred, row["answers"])
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, correct=bool(ok))
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r pred=%r targets=%r ok=%s",
+                    idx, row["query"][:80], pred, row["answers"], ok,
+                )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -500,6 +542,7 @@ def evaluate_cvqa_open_ended(
     model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
     max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
     logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     """CVQA's own open-ended protocol: no options shown in the prompt; score
     each candidate answer choice by log-likelihood and take the argmax."""
@@ -507,28 +550,33 @@ def evaluate_cvqa_open_ended(
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        choices = row["choices"]
-        scores = [
-            score_choice_loglikelihood(
-                image, row["query"], choice, nllb_code,
-                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
-                visual_pixels=visual_pixels, max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            choices = row["choices"]
+            scores = [
+                score_choice_loglikelihood(
+                    image, row["query"], choice, nllb_code,
+                    model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                    visual_pixels=visual_pixels, max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+                )
+                for choice in choices
+            ]
+            pred_idx = max(range(len(scores)), key=lambda i: scores[i])
+            target_idx = int(row["answer_index"])
+            ok = pred_idx == target_idx
+            correct += int(ok)
+            _write_result(
+                rf, row, pred=choices[pred_idx], pred_index=pred_idx,
+                choice_scores=[round(s, 4) for s in scores], correct=bool(ok),
             )
-            for choice in choices
-        ]
-        pred_idx = max(range(len(scores)), key=lambda i: scores[i])
-        target_idx = int(row["answer_index"])
-        ok = pred_idx == target_idx
-        correct += int(ok)
-        if idx < 5:
-            logger.info(
-                "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
-                idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
-            )
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
+                    idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
+                )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -576,6 +624,11 @@ def main() -> None:
     parser.add_argument("--max-llm-seq-len", type=int, default=512)
     parser.add_argument("--max-gen-len", type=int, default=16)
     parser.add_argument("--smoke", action="store_true", help="Run 5 examples only.")
+    parser.add_argument("--results-jsonl", default=None,
+                         help="If given, write one JSON line per example (full row plus pred/correct, "
+                              "and pred_index/choice_scores for cvqa) to this path -- input for "
+                              "Stage3/analysis/aggregate_breakdown.py, worldcuisines_task_comparison.py "
+                              "and qualitative_cases.py. Parent dir is created if missing.")
     args = parser.parse_args()
 
     if args.benchmark == "xgqa" and not args.images_dir:
@@ -608,7 +661,7 @@ def main() -> None:
         tokenizer_mt=tokenizer_mt, tokenizer_llm=tokenizer_llm, device=device, amp_dtype=amp_dtype,
         max_examples=max_examples, visual_pixels=args.visual_pixels,
         max_mt_seq_len=args.max_mt_seq_len, max_llm_seq_len=args.max_llm_seq_len,
-        logger=logger,
+        logger=logger, results_path=args.results_jsonl,
     )
 
     if args.benchmark == "cvqa":

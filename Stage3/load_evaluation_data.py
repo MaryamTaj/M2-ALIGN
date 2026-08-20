@@ -259,6 +259,13 @@ def load_xgqa(lang: str, logger: logging.Logger) -> list[dict]:
         image_id = entry.get("imageId")
         if not question or answer is None or not image_id:
             continue
+        # Original GQA question-type annotation, carried straight through
+        # from the raw testdev file -- structural (verify/query/choose/
+        # logical/compare) and semantic (object/attribute/category/
+        # relation/global) tags, used for the per-type accuracy breakdown
+        # in Stage3/analysis/aggregate_breakdown.py. Not every entry has a
+        # `types` block (a handful of testdev rows omit it), hence `.get`.
+        types = entry.get("types") or {}
         rows.append({
             "id": qid,
             "vg_image_id": str(image_id),
@@ -266,6 +273,8 @@ def load_xgqa(lang: str, logger: logging.Logger) -> list[dict]:
             "answer": str(answer),
             "source_language": lang,
             "source_dataset": "xgqa_testdev",
+            "question_type_structural": types.get("structural"),
+            "question_type_semantic": types.get("semantic"),
         })
     return rows
 
@@ -377,6 +386,15 @@ def load_worldcuisines(lang: str, split: str, task: str, logger: logging.Logger)
         en_answer = en_answer_by_qa_id.get(qa_id)
         if en_answer:
             answers.add(str(en_answer))
+        # `prompt_type` distinguishes the three question framings this loader
+        # deliberately keeps mixed together (see this function's docstring):
+        # 1=no-context, 3=contextualized (location named in the question),
+        # 4=adversarial (a distractor cuisine named in the question). task2
+        # rows are always prompt_type=2 (no-context origin question) -- kept
+        # as-is rather than remapped, so a raw value of 2 is the signal that
+        # a row came from task2 when task1/task2 results get pooled. Used by
+        # Stage3/analysis/aggregate_breakdown.py's context-role breakdown.
+        prompt_type = r.get("prompt_type")
         rows.append({
             "id": qa_id,
             "image_url": r.get("image_url") or r.get("image_path"),
@@ -384,6 +402,7 @@ def load_worldcuisines(lang: str, split: str, task: str, logger: logging.Logger)
             "answers": sorted(answers),
             "source_language": lang,
             "source_dataset": f"worldcuisines_{task}_{split}",
+            "prompt_type": int(prompt_type) if prompt_type is not None else None,
         })
     return rows
 
@@ -615,6 +634,13 @@ def load_cvqa(lang: str, image_cache_dir: str, logger: logging.Logger) -> list[d
             "answer_index": int(label),
             "source_language": lang,
             "source_dataset": "cvqa_test",
+            # afaji/cvqa's own topical/geographic tags (e.g. "Food and
+            # Drink", "Sports", "People and everyday life"; `Country` is the
+            # subset's country, not necessarily the image's location) --
+            # used by Stage3/analysis/aggregate_breakdown.py's per-category
+            # breakdown.
+            "category": r.get("Category"),
+            "country": r.get("Country"),
         })
     if n_image_failed:
         logger.info("CVQA %s: %d rows dropped (image decode/save failed)", lang, n_image_failed)

@@ -38,6 +38,7 @@ cvqa           -- multiple-choice dataset, scored **open-ended via
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import io
 import json
@@ -251,23 +252,43 @@ def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
 
 # ─── Evaluation loops ────────────────────────────────────────────────────────
 
+def _open_results_writer(results_path: str | None):
+    """Must match Stage3/evaluate.py's `_open_results_writer` exactly."""
+    if results_path is None:
+        return contextlib.nullcontext()
+    os.makedirs(os.path.dirname(results_path) or ".", exist_ok=True)
+    return open(results_path, "w", encoding="utf-8")
+
+
+def _write_result(rf, row: dict, **fields) -> None:
+    """Must match Stage3/evaluate.py's `_write_result` exactly."""
+    if rf is None:
+        return
+    record = dict(row)
+    record.update(fields)
+    rf.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def evaluate_open_ended(
     rows: list[dict], lang: str, image_resolver,
     model, processor, device, max_examples: int | None, logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"open-ended/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        prompt = build_open_ended_prompt(row["query"])
-        pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
-        ok = open_ended_correct(pred, row["answer"])
-        correct += int(ok)
-        if idx < 5:
-            logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"open-ended/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            prompt = build_open_ended_prompt(row["query"])
+            pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
+            ok = open_ended_correct(pred, row["answer"])
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, correct=bool(ok))
+            if idx < 5:
+                logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -276,6 +297,7 @@ def evaluate_open_ended(
 def evaluate_worldcuisines_open_ended(
     rows: list[dict], lang: str, image_resolver,
     model, processor, device, max_examples: int | None, logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     """Must match Stage3/evaluate.py's `evaluate_worldcuisines_open_ended`
     exactly (generation path aside -- no NLLB/mapping here): scores against
@@ -284,19 +306,21 @@ def evaluate_worldcuisines_open_ended(
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        prompt = build_worldcuisines_prompt(row["query"])
-        pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
-        ok = worldcuisines_correct(pred, row["answers"])
-        correct += int(ok)
-        if idx < 5:
-            logger.info(
-                "idx=%d question=%r pred=%r targets=%r ok=%s",
-                idx, row["query"][:80], pred, row["answers"], ok,
-            )
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            prompt = build_worldcuisines_prompt(row["query"])
+            pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
+            ok = worldcuisines_correct(pred, row["answers"])
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, correct=bool(ok))
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r pred=%r targets=%r ok=%s",
+                    idx, row["query"][:80], pred, row["answers"], ok,
+                )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -305,31 +329,37 @@ def evaluate_worldcuisines_open_ended(
 def evaluate_cvqa_open_ended(
     rows: list[dict], lang: str, image_resolver,
     model, processor, device, max_examples: int | None, logger: logging.Logger,
+    results_path: str | None = None,
 ) -> float:
     """CVQA's own open-ended protocol: no options shown in the prompt; score
     each candidate answer choice by log-likelihood and take the argmax."""
     if max_examples is not None:
         rows = rows[:max_examples]
     correct = 0
-    for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
-        image = image_resolver(row)
-        if image is None:
-            continue
-        choices = row["choices"]
-        prompt = build_cvqa_open_ended_prompt(row["query"])
-        scores = [
-            score_choice_loglikelihood(image, prompt, choice, _VQA_SYSTEM, model, processor, device)
-            for choice in choices
-        ]
-        pred_idx = max(range(len(scores)), key=lambda i: scores[i])
-        target_idx = int(row["answer_index"])
-        ok = pred_idx == target_idx
-        correct += int(ok)
-        if idx < 5:
-            logger.info(
-                "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
-                idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"cvqa-open-ended/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            choices = row["choices"]
+            prompt = build_cvqa_open_ended_prompt(row["query"])
+            scores = [
+                score_choice_loglikelihood(image, prompt, choice, _VQA_SYSTEM, model, processor, device)
+                for choice in choices
+            ]
+            pred_idx = max(range(len(scores)), key=lambda i: scores[i])
+            target_idx = int(row["answer_index"])
+            ok = pred_idx == target_idx
+            correct += int(ok)
+            _write_result(
+                rf, row, pred=choices[pred_idx], pred_index=pred_idx,
+                choice_scores=[round(s, 4) for s in scores], correct=bool(ok),
             )
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r choices=%r scores=%r pred=%d target=%d ok=%s",
+                    idx, row["query"][:80], choices, [round(s, 3) for s in scores], pred_idx, target_idx, ok,
+                )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -369,6 +399,11 @@ def main() -> None:
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--smoke", action="store_true", help="Run 5 examples only.")
+    parser.add_argument("--results-jsonl", default=None,
+                         help="If given, write one JSON line per example (full row plus pred/correct, "
+                              "and pred_index/choice_scores for cvqa) to this path -- must match "
+                              "Stage3/evaluate.py's --results-jsonl schema so qualitative_cases.py can "
+                              "diff a Baseline run against a Stage3 run. Parent dir is created if missing.")
     args = parser.parse_args()
 
     if args.benchmark == "xgqa" and not args.images_dir:
@@ -397,11 +432,20 @@ def main() -> None:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
 
     if args.benchmark == "cvqa":
-        evaluate_cvqa_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+        evaluate_cvqa_open_ended(
+            rows, args.lang, resolver, model, processor, device, max_examples, logger,
+            results_path=args.results_jsonl,
+        )
     elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
-        evaluate_worldcuisines_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+        evaluate_worldcuisines_open_ended(
+            rows, args.lang, resolver, model, processor, device, max_examples, logger,
+            results_path=args.results_jsonl,
+        )
     else:
-        evaluate_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+        evaluate_open_ended(
+            rows, args.lang, resolver, model, processor, device, max_examples, logger,
+            results_path=args.results_jsonl,
+        )
 
 
 if __name__ == "__main__":

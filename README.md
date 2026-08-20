@@ -6,6 +6,11 @@ module load cudacore/.12.2.2
 module load arrow/18.1.0
 source $SCRATCH/venvs/m2-align/bin/activate
 
+# Stage3/analysis/ scripts (t-SNE, layer-wise retrieval) need numpy/scikit-learn/
+# matplotlib on top of the base install -- add once, on the workstation node
+# (compute nodes have no internet access):
+# pip install numpy scikit-learn matplotlib
+
 # (ON WORKSTATION ONLY)####################################################
 python -m venv .venv && source .venv/bin/activate
 pip install datasets requests pillow

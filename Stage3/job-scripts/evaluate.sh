@@ -26,6 +26,11 @@
 #   (repeat with LANG=de, LANG=zh, LANG=bn, ...)
 #
 # Optional: MAX_EXAMPLES=50 sbatch evaluate.sh
+#
+# Optional: RESULTS_JSONL=1 sbatch evaluate.sh
+#   writes one JSON line per example (row + pred/correct) to
+#   $STAGE3/results/$CHECKPOINT_STAGE/$BENCHMARK/$LANG.jsonl -- input for
+#   Stage3/analysis/{aggregate_breakdown,worldcuisines_task_comparison,qualitative_cases}.py.
 
 set -euo pipefail
 
@@ -33,6 +38,7 @@ BENCHMARK="${BENCHMARK:-xgqa}"
 LANG="${LANG:-ru}"
 CHECKPOINT_STAGE="${CHECKPOINT_STAGE:-stage3b}"   # stage2 (before) or stage3b (after)
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
+RESULTS_JSONL="${RESULTS_JSONL:-}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 
@@ -139,6 +145,11 @@ if [ -n "$MAX_EXAMPLES" ]; then
 fi
 if [ "$BENCHMARK" = "xgqa" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --images-dir $GQA_IMAGES_DIR"
+fi
+if [ -n "$RESULTS_JSONL" ]; then
+  RESULTS_PATH="$STAGE3/results/$CHECKPOINT_STAGE/$BENCHMARK/$LANG.jsonl"
+  EXTRA_ARGS="$EXTRA_ARGS --results-jsonl $RESULTS_PATH"
+  echo "RESULTS_JSONL=$RESULTS_PATH"
 fi
 
 echo "=== Start $CHECKPOINT_STAGE VQA evaluation: $BENCHMARK/$LANG ==="
