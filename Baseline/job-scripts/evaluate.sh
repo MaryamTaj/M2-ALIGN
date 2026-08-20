@@ -39,7 +39,11 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 GQA_IMAGES_DIR="$DATA_ROOT/Stage3/data/gqa/images"
 WORLDCUISINES_IMAGES_DIR="$DATA_ROOT/Stage3/data/worldcuisines/images"
-EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl"
+case "$BENCHMARK" in
+  worldcuisines_task1) EVAL_DATA="$DATA_ROOT/Stage3/data/worldcuisines/task1/$LANG.jsonl" ;;
+  worldcuisines_task2) EVAL_DATA="$DATA_ROOT/Stage3/data/worldcuisines/task2/$LANG.jsonl" ;;
+  *)                   EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl" ;;
+esac
 
 echo "=== Job info ==="
 date

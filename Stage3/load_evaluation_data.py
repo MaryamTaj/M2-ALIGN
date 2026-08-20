@@ -78,8 +78,10 @@ WorldCuisines (Mohamed et al., NAACL 2025) -- `worldcuisines/vqa` on the
     dish popular") -- a different skill (food-origin world knowledge, not
     visual dish recognition), and a smaller split (100 rows/language in
     `test_small` vs. task1's 300). This project runs both, written to
-    separate `worldcuisines_task1`/`worldcuisines_task2` output dirs (see
-    `main`) so they can be evaluated as independent benchmark rows.
+    `worldcuisines/task1/`/`worldcuisines/task2/` subdirectories under one
+    shared `worldcuisines/` output dir (see `main`) -- mirroring CVQA's own
+    `cvqa/{lang}.jsonl` + `cvqa/images/` layout -- so they can be evaluated
+    as independent benchmark rows while sharing one image cache.
 
     Empirically, task1's own-language `answer` field is frequently just
     the English name left untranslated -- verified directly against all 7
@@ -117,11 +119,12 @@ Usage
 
     # WorldCuisines task1 (Dish Name Prediction) -- active for
     # bn/ru/zh/id/ko/jv/si (formal register, krama for Javanese); no
-    # pt/de/mn/ga coverage:
+    # pt/de/mn/ga coverage. Writes worldcuisines/task1/{lang}.jsonl plus
+    # worldcuisines/images/ (shared with task2 below):
     python Stage3/load_evaluation_data.py --benchmark worldcuisines_task1 --languages bn,ru,zh,id,ko,jv,si
 
     # WorldCuisines task2 (Dish Origin Prediction) -- same 7 languages,
-    # written to a separate worldcuisines_task2/ output dir:
+    # written to worldcuisines/task2/{lang}.jsonl:
     python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --languages bn,ru,zh,id,ko,jv,si
 """
 from __future__ import annotations
@@ -665,11 +668,11 @@ def main() -> None:
             out_path = os.path.join(args.output_dir, "xgqa", f"{lang}.jsonl")
         elif args.benchmark == "worldcuisines_task1":
             rows = load_worldcuisines(lang, args.worldcuisines_split, "task1", logger)
-            out_path = os.path.join(args.output_dir, "worldcuisines_task1", f"{lang}.jsonl")
+            out_path = os.path.join(args.output_dir, "worldcuisines", "task1", f"{lang}.jsonl")
             download_worldcuisines_images(rows, args.worldcuisines_image_cache_dir, logger)
         elif args.benchmark == "worldcuisines_task2":
             rows = load_worldcuisines(lang, args.worldcuisines_split, "task2", logger)
-            out_path = os.path.join(args.output_dir, "worldcuisines_task2", f"{lang}.jsonl")
+            out_path = os.path.join(args.output_dir, "worldcuisines", "task2", f"{lang}.jsonl")
             download_worldcuisines_images(rows, args.worldcuisines_image_cache_dir, logger)
         else:
             rows = load_cvqa(lang, args.cvqa_image_cache_dir, logger)

@@ -45,7 +45,11 @@ LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 WORLDCUISINES_IMAGES_DIR="$STAGE3/data/worldcuisines/images"
-EVAL_DATA="$STAGE3/data/$BENCHMARK/$LANG.jsonl"
+case "$BENCHMARK" in
+  worldcuisines_task1) EVAL_DATA="$STAGE3/data/worldcuisines/task1/$LANG.jsonl" ;;
+  worldcuisines_task2) EVAL_DATA="$STAGE3/data/worldcuisines/task2/$LANG.jsonl" ;;
+  *)                   EVAL_DATA="$STAGE3/data/$BENCHMARK/$LANG.jsonl" ;;
+esac
 
 if [ "$CHECKPOINT_STAGE" = "stage2" ]; then
   MAPPING_CKPT="$STAGE2/outputs/$LANG/pytorch_model.bin"
