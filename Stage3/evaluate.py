@@ -557,10 +557,13 @@ def main() -> None:
                               "bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
-    parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "cvqa", "images"),
-                        help="Image cache dir. For cvqa: pre-populated by load_evaluation_data.py's "
-                             "--cvqa-image-cache-dir, looked up by row id (no network access needed). "
-                             "For worldcuisines_task1/_task2: a URL download cache, populated on the fly.")
+    parser.add_argument("--image-cache-dir", default=None,
+                        help="Image cache dir. Defaults to <Stage3 data>/cvqa/images (cvqa) or "
+                             "<Stage3 data>/worldcuisines/images (worldcuisines_task1/_task2), matching "
+                             "load_evaluation_data.py's --cvqa-image-cache-dir / "
+                             "--worldcuisines-image-cache-dir. Both are pre-populated on the workstation "
+                             "node before this job runs -- this GPU job has no network access (Narval's "
+                             "compute nodes have none), so it only ever reads the local cache.")
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--mt-path", default="facebook/nllb-200-3.3B")
     parser.add_argument("--mapping-ckpt", required=True,
@@ -577,6 +580,11 @@ def main() -> None:
 
     if args.benchmark == "xgqa" and not args.images_dir:
         parser.error("--images-dir is required for --benchmark xgqa")
+    if args.image_cache_dir is None:
+        if args.benchmark == "cvqa":
+            args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "cvqa", "images")
+        elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
+            args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "worldcuisines", "images")
 
     logger = setup_logging(args.benchmark)
     max_examples = 5 if args.smoke else args.max_examples

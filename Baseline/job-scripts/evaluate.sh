@@ -38,6 +38,7 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 GQA_IMAGES_DIR="$DATA_ROOT/Stage3/data/gqa/images"
+WORLDCUISINES_IMAGES_DIR="$DATA_ROOT/Stage3/data/worldcuisines/images"
 EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl"
 
 echo "=== Job info ==="
@@ -87,6 +88,16 @@ if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then
   echo "       Download+extract https://nlp.stanford.edu/data/gqa/images.zip there."
   exit 1
 fi
+case "$BENCHMARK" in
+  worldcuisines_task*)
+    if [ ! -d "$WORLDCUISINES_IMAGES_DIR" ]; then
+      echo "ERROR: WorldCuisines image cache not found: $WORLDCUISINES_IMAGES_DIR"
+      echo "       This node has no internet access -- pre-fetch on the workstation node first:"
+      echo "       python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG"
+      exit 1
+    fi
+    ;;
+esac
 
 # Build optional args
 EXTRA_ARGS="--local-files-only"

@@ -44,6 +44,7 @@ STAGE3="$DATA_ROOT/Stage3"
 LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
+WORLDCUISINES_IMAGES_DIR="$STAGE3/data/worldcuisines/images"
 EVAL_DATA="$STAGE3/data/$BENCHMARK/$LANG.jsonl"
 
 if [ "$CHECKPOINT_STAGE" = "stage2" ]; then
@@ -117,6 +118,16 @@ if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then
   echo "ERROR: GQA images directory not found: $GQA_IMAGES_DIR"
   exit 1
 fi
+case "$BENCHMARK" in
+  worldcuisines_task*)
+    if [ ! -d "$WORLDCUISINES_IMAGES_DIR" ]; then
+      echo "ERROR: WorldCuisines image cache not found: $WORLDCUISINES_IMAGES_DIR"
+      echo "       This node has no internet access -- pre-fetch on the workstation node first:"
+      echo "       python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG"
+      exit 1
+    fi
+    ;;
+esac
 
 EXTRA_ARGS="--local-files-only"
 if [ -n "$MAX_EXAMPLES" ]; then

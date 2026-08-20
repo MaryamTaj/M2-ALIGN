@@ -127,6 +127,8 @@ Usage
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import logging
 import os
@@ -134,6 +136,7 @@ from datetime import datetime
 
 import requests
 from datasets import load_dataset
+from PIL import Image
 
 # Data/outputs/logs live on $SCRATCH, not in the git checkout.
 SCRATCH_ROOT = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3")
@@ -380,6 +383,52 @@ def load_worldcuisines(lang: str, split: str, task: str, logger: logging.Logger)
     return rows
 
 
+def download_worldcuisines_images(rows: list[dict], cache_dir: str, logger: logging.Logger) -> None:
+    """Pre-fetch every row's image into a local cache, on the workstation
+    node (which has internet), so evaluate.py's GPU job never needs its
+    own network access -- Narval's compute nodes have none. Same reason
+    `load_cvqa` above saves images locally instead of leaving them for
+    evaluate.py to fetch.
+
+    Cache key is `sha1(image_url).hexdigest() + ".jpg"`, saved as RGB
+    JPEG -- must match evaluate.py's `load_image_by_url` cache-path scheme
+    exactly (see that function), so its `os.path.exists(cache_path)` check
+    hits unconditionally and it never falls through to its own
+    `requests.get`. Idempotent and resumable: an already-cached URL is
+    skipped, so re-running after a partial failure only retries what's
+    missing. Shared across task1 and task2 (same image pool, since both
+    query the same set of dish photos) -- call this with the same
+    `cache_dir` for both.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+    urls = sorted({r["image_url"] for r in rows if r.get("image_url")})
+    n_cached = n_downloaded = n_failed = 0
+    for url in urls:
+        cache_path = os.path.join(cache_dir, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+        if os.path.exists(cache_path):
+            n_cached += 1
+            continue
+        try:
+            resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
+            resp.raise_for_status()
+            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            img.save(cache_path, format="JPEG", quality=85)
+            n_downloaded += 1
+        except Exception as e:
+            n_failed += 1
+            logger.warning("WorldCuisines image download failed for %s: %s", url, e)
+    logger.info(
+        "WorldCuisines images: %d already cached, %d newly downloaded, %d failed (of %d unique URLs) -> %s",
+        n_cached, n_downloaded, n_failed, len(urls), cache_dir,
+    )
+    if n_failed:
+        logger.warning(
+            "%d image(s) failed to download -- those rows will resolve to no image "
+            "(skipped) during evaluation, since the GPU job has no network to retry them.",
+            n_failed,
+        )
+
+
 # ---------------------------------------------------------------------------
 # CVQA
 # ---------------------------------------------------------------------------
@@ -501,12 +550,21 @@ def main() -> None:
         help="Where each CVQA row's image is saved, as <id>.jpg. Defaults to "
              "<output_dir>/cvqa/images -- pass evaluate.py's --image-cache-dir the same path.",
     )
+    parser.add_argument(
+        "--worldcuisines-image-cache-dir", type=str, default=None,
+        help="Where WorldCuisines images are pre-downloaded, as sha1(url).jpg. Defaults to "
+             "<output_dir>/worldcuisines/images -- must match evaluate.py's --image-cache-dir "
+             "exactly (no internet on Narval's compute nodes, so this has to happen here). "
+             "Shared by task1 and task2 -- same image pool.",
+    )
     args = parser.parse_args()
 
     if args.output_dir is None:
         args.output_dir = os.path.join(SCRATCH_ROOT, "data")
     if args.cvqa_image_cache_dir is None:
         args.cvqa_image_cache_dir = os.path.join(args.output_dir, "cvqa", "images")
+    if args.worldcuisines_image_cache_dir is None:
+        args.worldcuisines_image_cache_dir = os.path.join(args.output_dir, "worldcuisines", "images")
 
     logger = setup_logging(os.path.join(SCRATCH_ROOT, "logs"))
     langs = [x.strip() for x in args.languages.split(",") if x.strip()]
@@ -518,9 +576,11 @@ def main() -> None:
         elif args.benchmark == "worldcuisines_task1":
             rows = load_worldcuisines(lang, args.worldcuisines_split, "task1", logger)
             out_path = os.path.join(args.output_dir, "worldcuisines_task1", f"{lang}.jsonl")
+            download_worldcuisines_images(rows, args.worldcuisines_image_cache_dir, logger)
         elif args.benchmark == "worldcuisines_task2":
             rows = load_worldcuisines(lang, args.worldcuisines_split, "task2", logger)
             out_path = os.path.join(args.output_dir, "worldcuisines_task2", f"{lang}.jsonl")
+            download_worldcuisines_images(rows, args.worldcuisines_image_cache_dir, logger)
         else:
             rows = load_cvqa(lang, args.cvqa_image_cache_dir, logger)
             out_path = os.path.join(args.output_dir, "cvqa", f"{lang}.jsonl")

@@ -137,6 +137,9 @@ python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,p
   --output_dir Stage3/data
 python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga \
   --output_dir Stage3/data
+// WorldCuisines images are pre-downloaded to Stage3/data/worldcuisines/images/
+// by these same commands (same reason CVQA's images are pre-saved above --
+// compute nodes have no internet, so this has to happen here).
 python Stage3/load_evaluation_data.py --benchmark worldcuisines_task1 --languages bn,ru,zh,id,ko,jv,si
 python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --languages bn,ru,zh,id,ko,jv,si
 
