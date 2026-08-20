@@ -18,8 +18,38 @@ run all of them -- they're independent evaluations, not interchangeable.
 xgqa           -- open-ended, English short answers. Active languages:
                   bn/de/ru/zh/pt/id/ko (all 8 of xGQA's own languages that
                   this project has a checkpoint for).
-worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
-                  deferred)
+worldcuisines_task1/_task2 -- open-ended. Two independent benchmark rows,
+                  both active for bn/ru/zh/id/ko/jv/si (formal register
+                  everywhere a casual/formal or ngoko/krama split exists;
+                  see load_evaluation_data.py's WORLDCUISINES_LANG_TAGS).
+                  No pt/de/mn/ga coverage.
+                    worldcuisines_task1 -- task1, Dish Name Prediction.
+                    worldcuisines_task2 -- task2, Dish Origin Prediction
+                                            (same schema, smaller split).
+                  Both scored by
+                  `evaluate_worldcuisines_open_ended`/`worldcuisines_correct`,
+                  not the xGQA scorer: dual-reference (native-language
+                  answer + English answer for the same qa_id, see
+                  `load_worldcuisines`) and case-insensitive substring
+                  containment, matching the WorldCuisines authors' own
+                  `evaluation/score/score.py` (`oe_mode="dual"`) rather than
+                  xGQA's exact-match. Prompted with `build_worldcuisines_prompt`,
+                  which -- unlike the deferred-English rationale considered
+                  and rejected here -- keeps the "single word/short phrase,
+                  in English" instruction: the row's own-language `answer`
+                  field is frequently just the English name left
+                  untranslated (100% of rows for zh_cn/si_formal_spoken,
+                  95%/93% for id_formal/bn -- see `load_worldcuisines`'s
+                  docstring), so `answers` is always at least the English
+                  reference and the dual-reference scorer already credits a
+                  native answer on the minority of rows where one exists --
+                  prompting for English just maximizes the odds of matching
+                  whichever reference is actually there. This departs from
+                  the WorldCuisines authors' own harness, which sends no
+                  system prompt and no added instruction at all (just
+                  `open_ended_prompt` verbatim) -- this project keeps its
+                  system message (`_VQA_SYSTEM`) and English instruction
+                  regardless, for consistency with xGQA/CVQA's prompting.
 cvqa           -- multiple-choice dataset, but scored **open-ended via
                   answer-choice log-likelihood** (the CVQA paper's own
                   "open-ended" evaluation protocol: prompt with the question
@@ -80,6 +110,32 @@ def build_cvqa_open_ended_prompt(question: str) -> str:
     and no "single word" instruction (CVQA answers are full phrases, e.g.
     city names, not necessarily one word)."""
     return f"Question: {question}"
+
+
+def build_worldcuisines_prompt(question: str) -> str:
+    """Same "single word or short phrase, in English" instruction as
+    `build_open_ended_prompt` -- reinstated after checking the actual gold
+    data: a row's own-language `answer` field is frequently just the
+    English name left untranslated by WorldCuisines' own annotators (100%
+    of the time for zh_cn/si_formal_spoken, 95%/93% for id_formal/bn,
+    60-76% for ko_formal/ru_formal/jv_krama -- see `load_worldcuisines`'s
+    docstring in load_evaluation_data.py). Since `answers` (built by
+    `load_worldcuisines`) is *always* at least the English reference and
+    only sometimes also the native one, prompting for English maximizes
+    the chance of matching whichever reference actually exists, without
+    costing anything: the dual-reference scorer in
+    `evaluate_worldcuisines_open_ended` still credits a native-language
+    answer on the minority of rows where one is available, since this is
+    only an instruction, not a constraint enforced on the output.
+    `question` here is WorldCuisines' own `open_ended_prompt`
+    (native-language question -- see `load_worldcuisines`); this project
+    adds the "Question: "/English-instruction wrapping in English for
+    consistency with `build_open_ended_prompt` above, same as xGQA,
+    even though the WorldCuisines authors' own harness
+    (`evaluation/src/base_model.py`) sends `open_ended_prompt` verbatim
+    with no added instruction.
+    """
+    return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +400,20 @@ def open_ended_correct(pred_text: str, target: str) -> bool:
     return normalize_answer(pred_text) == normalize_answer(target)
 
 
+def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
+    """WorldCuisines' own scoring convention -- `score_oe` in the authors'
+    `evaluation/score/score.py`, `oe_mode="dual"`: correct if *any* reference
+    answer string appears anywhere in the generated text, case-insensitive.
+    Deliberately looser than `open_ended_correct`'s exact match (no
+    punctuation stripping either) -- matches the source benchmark's own
+    published methodology rather than this project's xGQA convention, since
+    WorldCuisines answers are free-text dish names, not short GQA-style
+    single tokens.
+    """
+    pred_lower = pred_text.lower()
+    return any(ans.lower() in pred_lower for ans in answers if ans)
+
+
 # ---------------------------------------------------------------------------
 # Evaluation loops
 # ---------------------------------------------------------------------------
@@ -375,6 +445,49 @@ def evaluate_open_ended(
         correct += int(ok)
         if idx < 5:
             logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
+def evaluate_worldcuisines_open_ended(
+    rows: list[dict],
+    lang: str,
+    image_resolver,
+    model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+    max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
+    logger: logging.Logger,
+) -> float:
+    """Same generation path as `evaluate_open_ended` (xGQA) -- system message,
+    `_VQA_SYSTEM` -- but `build_worldcuisines_prompt` wrapping (no forced
+    "in English" instruction, see that function's docstring) and scored
+    with `worldcuisines_correct` against `row["answers"]` (dual-reference
+    list from `load_worldcuisines`) instead of exact match against a single
+    `row["answer"]`. See this module's docstring for why the scoring
+    convention differs from xGQA.
+    """
+    nllb_code = NLLB_CODES[lang]
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
+        image = image_resolver(row)
+        if image is None:
+            continue
+        prompt = build_worldcuisines_prompt(row["query"])
+        pred = generate_answer(
+            image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
+            model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+            max_new_tokens=16, visual_pixels=visual_pixels,
+            max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+        )
+        ok = worldcuisines_correct(pred, row["answers"])
+        correct += int(ok)
+        if idx < 5:
+            logger.info(
+                "idx=%d question=%r pred=%r targets=%r ok=%s",
+                idx, row["query"][:80], pred, row["answers"], ok,
+            )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -437,15 +550,17 @@ def _read_jsonl(path: str) -> list[dict]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
-    parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
+    parser.add_argument("--benchmark", required=True,
+                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; "
+                              "bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default=os.path.join(SCRATCH_ROOT, "data", "cvqa", "images"),
                         help="Image cache dir. For cvqa: pre-populated by load_evaluation_data.py's "
                              "--cvqa-image-cache-dir, looked up by row id (no network access needed). "
-                             "For worldcuisines: a URL download cache, populated on the fly.")
+                             "For worldcuisines_task1/_task2: a URL download cache, populated on the fly.")
     parser.add_argument("--llm-path", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--mt-path", default="facebook/nllb-200-3.3B")
     parser.add_argument("--mapping-ckpt", required=True,
@@ -490,6 +605,8 @@ def main() -> None:
 
     if args.benchmark == "cvqa":
         evaluate_cvqa_open_ended(rows, args.lang, **common_kw)
+    elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
+        evaluate_worldcuisines_open_ended(rows, args.lang, **common_kw)
     else:
         evaluate_open_ended(rows, args.lang, **common_kw)
 

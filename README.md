@@ -137,6 +137,8 @@ python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,p
   --output_dir Stage3/data
 python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga \
   --output_dir Stage3/data
+python Stage3/load_evaluation_data.py --benchmark worldcuisines_task1 --languages bn,ru,zh,id,ko,jv,si
+python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --languages bn,ru,zh,id,ko,jv,si
 
 // Stage 3 images
 wget -c https://nlp.stanford.edu/data/gqa/images.zip
@@ -178,7 +180,6 @@ LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
 
 ###########################################################################
-LANG=bn BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=de BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
@@ -198,6 +199,21 @@ LANG=bn BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evalua
 LANG=ru BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 
+BENCHMARK=worldcuisines_task1 LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=ru CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=zh CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=id CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=ko CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=jv CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task1 LANG=si CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+
+BENCHMARK=worldcuisines_task2 LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=ru CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=zh CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=id CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=ko CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=jv CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+BENCHMARK=worldcuisines_task2 LANG=si CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 
 sbatch --export=BENCHMARK=xgqa,LANG=bn Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=xgqa,LANG=ru Baseline/job-scripts/evaluate.sh
@@ -218,3 +234,18 @@ sbatch --export=BENCHMARK=cvqa,LANG=bn Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=cvqa,LANG=ru Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=cvqa,LANG=zh Baseline/job-scripts/evaluate.sh
 
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=bn Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=ru Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=zh Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=id Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=ko Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=jv Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task1,LANG=si Baseline/job-scripts/evaluate.sh
+
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=bn Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=ru Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=zh Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=id Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=ko Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=jv Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=worldcuisines_task2,LANG=si Baseline/job-scripts/evaluate.sh

@@ -12,19 +12,21 @@ for -- policy is to run every benchmark a language qualifies for, not just
 one, since xGQA/CVQA/WorldCuisines are independent evaluations, not
 interchangeable:
 
-    bn         xGQA + CVQA
-    de         xGQA only (no CVQA subset for German at all)
-    ru, zh     xGQA + CVQA
-    pt, id, ko xGQA + CVQA
-    jv         CVQA (+ WorldCuisines, deferred) -- no xGQA coverage
-    mn, si, ga CVQA only -- no xGQA or WorldCuisines coverage
+    bn         xGQA + CVQA + WorldCuisines (task1 + task2)
+    de         xGQA only (no CVQA or WorldCuisines coverage for German at all)
+    ru, zh     xGQA + CVQA + WorldCuisines (task1 + task2)
+    pt         xGQA + CVQA (no WorldCuisines coverage for Portuguese)
+    id, ko     xGQA + CVQA + WorldCuisines (task1 + task2)
+    jv, si     CVQA + WorldCuisines (task1 + task2) -- no xGQA coverage
+    mn, ga     CVQA only -- no xGQA or WorldCuisines coverage
 
 CVQA is scored open-ended-via-likelihood -- see evaluate.py -- not as
 visible-choice multiple-choice, per the CVQA paper's own open-ended
 protocol. Yoruba is dropped: no xGQA/CVQA/WorldCuisines coverage at all.
-WorldCuisines is otherwise deferred even where it has coverage (id/jv) --
-its loader is kept below, working and unchanged, as ready-to-use
-infrastructure if that scope is widened.
+WorldCuisines task1 (Dish Name Prediction) and task2 (Dish Origin
+Prediction) are both run as independent benchmark rows -- see
+`--benchmark worldcuisines_task1` / `--benchmark worldcuisines_task2` below --
+for every language WorldCuisines covers.
 
 Sources
 -------
@@ -44,8 +46,52 @@ WorldCuisines (Mohamed et al., NAACL 2025) -- `worldcuisines/vqa` on the
     Hub, configs `task1`/`task2`, splits `train`/`test_small`/`test_large`.
     Filtered client-side by the `lang` field (exact tag verified against a
     live sample at load time, logged for a sanity check -- see the Stage 3
-    verification plan's "data sanity" step). Covers Indonesian/Javanese
-    only -- no Bengali coverage -- deferred, see above.
+    verification plan's "data sanity" step). Covers bn/ru/zh/id/ko/jv/si --
+    verified directly against the `task1`/`test_small` JSONL files on the
+    Hub (not just the dataset viewer). No pt/de/mn/ga coverage at all (pt
+    in particular is absent despite having xGQA+CVQA coverage elsewhere).
+    id/ko/ru each ship two registers (`_casual`/`_formal`); jv ships
+    `_ngoko`/`_krama` (a real register distinction in Javanese, not just
+    formality of phrasing). This project always uses the formal variant
+    (`_krama` for Javanese) for consistency with xGQA/CVQA's standard-
+    register text -- see `WORLDCUISINES_LANG_TAGS`. si/bn/zh each have
+    only one `lang` tag (`si_formal_spoken`/`bn`/`zh_cn`), no register
+    choice needed.
+
+    Scoring diverges from xGQA/CVQA -- see evaluate.py's
+    `evaluate_worldcuisines_open_ended`/`worldcuisines_correct` -- to match
+    the WorldCuisines authors' own protocol (`evaluation/score/score.py` in
+    their GitHub repo, not just the paper text): dual-reference (this row's
+    own-language answer + the qa_id's English answer, built in
+    `load_worldcuisines` below) and case-insensitive substring containment,
+    not xGQA's exact-match. Their own model-querying harness
+    (`evaluation/src/qwen.py`) also sends no system prompt and no added
+    "single word/short phrase" instruction -- just `open_ended_prompt`
+    verbatim as the user turn. This project keeps its existing system
+    message and English-answer instruction anyway, for consistency with
+    xGQA/CVQA (see evaluate.py's module docstring for the rationale).
+
+    Both configs (`task1`/`task2`) share this exact schema -- verified
+    directly against `task2`'s own JSONL files, not assumed from the
+    dataset card. `task1` is Dish Name Prediction ("what is this food
+    called"); `task2` is Dish Origin Prediction ("which country made this
+    dish popular") -- a different skill (food-origin world knowledge, not
+    visual dish recognition), and a smaller split (100 rows/language in
+    `test_small` vs. task1's 300). This project runs both, written to
+    separate `worldcuisines_task1`/`worldcuisines_task2` output dirs (see
+    `main`) so they can be evaluated as independent benchmark rows.
+
+    Empirically, task1's own-language `answer` field is frequently just
+    the English name left untranslated -- verified directly against all 7
+    active languages' `test_small` files: 100% for `zh_cn`/
+    `si_formal_spoken`, 95%/93% for `id_formal`/`bn`, 60-76% for
+    `ko_formal`/`ru_formal`/`jv_krama`. Every `qa_id` in every active
+    language's file has a matching English row, so `answers` here is
+    always `{english}` (the common case) or `{native, english}` (whenever
+    a distinct native translation exists) -- never native-only. See
+    evaluate.py's module docstring for how this shapes the prompting
+    decision (`build_worldcuisines_prompt` keeps the "in English"
+    instruction specifically because of this skew).
 
 CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
     filtered by the `Subset` field (language-country pair string). Covers
@@ -69,9 +115,14 @@ Usage
     # jv/mn/si/ga: CVQA only -- no xGQA coverage for any of these four.
     python Stage3/load_evaluation_data.py --benchmark cvqa --languages jv,mn,si,ga
 
-    # Deferred (Indonesian/Javanese via worldcuisines) -- kept working for
-    # later, not run today; CVQA coverage for id/jv is active above:
-    python Stage3/load_evaluation_data.py --benchmark worldcuisines --languages id,jv
+    # WorldCuisines task1 (Dish Name Prediction) -- active for
+    # bn/ru/zh/id/ko/jv/si (formal register, krama for Javanese); no
+    # pt/de/mn/ga coverage:
+    python Stage3/load_evaluation_data.py --benchmark worldcuisines_task1 --languages bn,ru,zh,id,ko,jv,si
+
+    # WorldCuisines task2 (Dish Origin Prediction) -- same 7 languages,
+    # written to a separate worldcuisines_task2/ output dir:
+    python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --languages bn,ru,zh,id,ko,jv,si
 """
 from __future__ import annotations
 
@@ -96,13 +147,25 @@ XGQA_RAW_BASE = "https://raw.githubusercontent.com/adapter-hub/xGQA/master/data/
 # (outside its 8 languages), so CVQA is their only VQA-eval path.
 XGQA_LANGS = {"bn", "de", "en", "ru", "zh", "pt", "id", "ko"}
 
-# Candidate substrings to match against WorldCuisines' `lang` field and
-# CVQA's `Subset` field. Verify the actual match against the logged
-# unique-value dump before trusting downstream training/eval numbers.
-WORLDCUISINES_LANG_CANDIDATES: dict[str, list[str]] = {
-    "id": ["ind", "id", "indonesian"],
-    "jv": ["jav", "jv", "javanese"],
+# Exact WorldCuisines `lang` tag per language -- verified directly against
+# the `task1`/`test_small` JSONL files on the Hub (each file's `lang` field
+# equals its filename prefix, e.g. `id_formal_small_eval_task1.jsonl` rows
+# all have `lang == "id_formal"`). Always the formal register where a
+# split exists (krama for Javanese), to match xGQA/CVQA's standard-register
+# text -- see the WorldCuisines paragraph in this module's docstring.
+WORLDCUISINES_LANG_TAGS: dict[str, str] = {
+    "id": "id_formal",
+    "jv": "jv_krama",
+    "ko": "ko_formal",
+    "ru": "ru_formal",
+    "si": "si_formal_spoken",
+    "bn": "bn",
+    "zh": "zh_cn",
 }
+
+# Candidate substrings to match against CVQA's `Subset` field. Verify the
+# actual match against the logged unique-value dump before trusting
+# downstream training/eval numbers.
 CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
     "id": ["indonesian"],
     "jv": ["javanese"],
@@ -203,68 +266,114 @@ def load_xgqa(lang: str, logger: logging.Logger) -> list[dict]:
 # WorldCuisines
 # ---------------------------------------------------------------------------
 
-def _resolve_worldcuisines_lang_tag(ds, candidates: list[str], logger: logging.Logger) -> str:
-    """Find the actual `lang` value matching one of *candidates*.
+def _resolve_worldcuisines_lang_tag(ds, expected_tag: str, logger: logging.Logger) -> str:
+    """Verify *expected_tag* is an actual `lang` value in *ds*.
 
-    Logs the full set of unique `lang` values seen (capped) so a human can
-    sanity-check the match — see the Stage 3 "data sanity" verification
-    step; this loader refuses to guess silently.
+    Logs the full set of observed `lang` values so a human can sanity-check
+    the match — see the Stage 3 "data sanity" verification step; this
+    loader refuses to guess silently. Exact match, not substring: WorldCuisines
+    ships casual/formal (and jv's ngoko/krama) register splits under
+    distinct `lang` tags, and a substring match risks silently landing on
+    the wrong register.
     """
-    seen: set[str] = set()
-    for row in ds:
-        seen.add(str(row["lang"]))
-        if len(seen) > 200:
-            break
-    logger.info("WorldCuisines observed lang tags (sample): %s", sorted(seen))
-    for cand in candidates:
-        for tag in seen:
-            if cand.lower() in tag.lower():
-                logger.info("Matched candidate %r -> lang tag %r", cand, tag)
-                return tag
-    raise ValueError(
-        f"None of {candidates} matched any observed WorldCuisines `lang` tag: {sorted(seen)}. "
-        "Update WORLDCUISINES_LANG_CANDIDATES with the correct tag."
-    )
+    seen: set[str] = {str(row["lang"]) for row in ds}
+    logger.info("WorldCuisines observed lang tags: %s", sorted(seen))
+    if expected_tag not in seen:
+        raise ValueError(
+            f"Expected WorldCuisines lang tag {expected_tag!r} not found among observed tags: "
+            f"{sorted(seen)}. Update WORLDCUISINES_LANG_TAGS with the correct tag."
+        )
+    return expected_tag
 
 
 def load_worldcuisines(lang: str, split: str, task: str, logger: logging.Logger) -> list[dict]:
     """Load a WorldCuisines held-out split filtered to one language.
 
     Args:
-        lang: One of the keys in :data:`WORLDCUISINES_LANG_CANDIDATES` (``id``/``jv``).
+        lang: One of the keys in :data:`WORLDCUISINES_LANG_TAGS`.
         split: ``"test_small"`` or ``"test_large"``.
-        task: ``"task1"`` or ``"task2"`` (multiple-choice vs. open-ended,
-            per the dataset's own task split).
+        task: ``"task1"`` (Dish Name Prediction, e.g. "what is this food
+            called") or ``"task2"`` (Dish Origin Prediction, e.g. "which
+            country made this dish popular") -- both configs carry the same
+            multi_choice_prompt/open_ended_prompt schema; this project only
+            ever loads task1.
         logger: Logger instance.
 
     Returns:
-        List of row dicts: ``{id, image_url, query, answer,
-        source_language, source_dataset}``.
+        List of row dicts: ``{id, image_url, query, answers,
+        source_language, source_dataset}``. ``answers`` is a list (dual
+        reference: this row's own-language answer + the qa_id's English
+        answer), not a single string -- see the "dual reference" note below.
+
+    ``query``/native answer deliberately come from ``open_ended_prompt``/
+    ``answer`` (free-text dish name), not ``multi_choice_prompt``/
+    ``multi_choice_answer`` (a 5-way index): the latter's prompt embeds
+    the gold answer as one of its visible options -- scoring against it
+    would leak the answer and evaluate a completely different task than
+    the "open-ended, English short answers" this benchmark is documented
+    as (see evaluate.py's module docstring), inconsistent with xGQA/CVQA.
+
+    No filtering by `prompt_type` -- every row in the split is kept, so
+    task1 rows here are an even 3-way mix of the benchmark's three prompt
+    settings (verified against a live sample: 100/100/100 of 300 in
+    `test_small`): `prompt_type=1` no-context ("What is this food
+    called?"), `=3` contextualized ("What is the local name for this dish
+    in <LOCATION>?"), `=4` adversarial ("I like <CUISINE> food. What is
+    this dish called?" -- see the source repo's
+    `resources/prompt_query_template.csv` for the full template set).
+    task2 rows are entirely `prompt_type=2`, no-context only (e.g. "Where
+    is this dish from?") -- the source templates have no with_context or
+    adversarial variant for the origin-prediction question.
+
+    Dual reference (matches the WorldCuisines authors' own `score_oe`
+    `oe_mode="dual"` in their `evaluation/score/score.py`): a row's own
+    `answer` field is NOT always English -- e.g. ru_formal's answer for
+    the "stuffed eggplant" dish is "Фаршированные баклажаны" (Cyrillic),
+    jv_krama's is "Tèrong isi" -- while this project's eval prompt (see
+    `build_open_ended_prompt` in evaluate.py) instructs the model to
+    answer *in English*. Scoring only against the row's own (possibly
+    non-English) answer, as the original single-reference version of this
+    loader did, would mark a correct English answer wrong for any language
+    whose native dish name differs from English. Joining in the same
+    qa_id's `lang == "en"` row's answer as a second reference fixes that,
+    while keeping the native answer too in case the model answers natively
+    despite the instruction. The `en` filter is free -- `ds` already holds
+    the whole split in memory from the `load_dataset` call above, so this
+    doesn't trigger a second download.
     """
-    if lang not in WORLDCUISINES_LANG_CANDIDATES:
+    if lang not in WORLDCUISINES_LANG_TAGS:
         raise ValueError(f"No WorldCuisines coverage configured for {lang!r}")
 
     logger.info("Loading worldcuisines/vqa [%s/%s] ...", task, split)
     ds = load_dataset("worldcuisines/vqa", task, split=split)
     logger.info("worldcuisines/vqa %s/%s: %d rows total", task, split, len(ds))
 
-    tag = _resolve_worldcuisines_lang_tag(ds, WORLDCUISINES_LANG_CANDIDATES[lang], logger)
+    tag = _resolve_worldcuisines_lang_tag(ds, WORLDCUISINES_LANG_TAGS[lang], logger)
     ds_lang = ds.filter(lambda r: str(r["lang"]) == tag)
     logger.info("Filtered to lang=%r: %d rows", tag, len(ds_lang))
 
+    ds_en = ds.filter(lambda r: str(r["lang"]) == "en")
+    en_answer_by_qa_id = {str(r["qa_id"]): r["answer"] for r in ds_en if r.get("answer")}
+    logger.info("English reference answers available for %d qa_ids", len(en_answer_by_qa_id))
+
     rows = []
     for r in ds_lang:
-        query = r.get("multi_choice_prompt") or r.get("open_ended_prompt")
-        answer = r.get("multi_choice_answer")
-        if answer is None:
-            answer = r.get("answer")
-        if not query or answer is None:
+        query = r.get("open_ended_prompt") or r.get("multi_choice_prompt")
+        native_answer = r.get("answer")
+        if native_answer is None:
+            native_answer = r.get("multi_choice_answer")
+        qa_id = str(r.get("qa_id")) if r.get("qa_id") is not None else None
+        if not query or native_answer is None or not qa_id:
             continue
+        answers = {str(native_answer)}
+        en_answer = en_answer_by_qa_id.get(qa_id)
+        if en_answer:
+            answers.add(str(en_answer))
         rows.append({
-            "id": str(r.get("qa_id")),
+            "id": qa_id,
             "image_url": r.get("image_url") or r.get("image_path"),
             "query": query,
-            "answer": str(answer),
+            "answers": sorted(answers),
             "source_language": lang,
             "source_dataset": f"worldcuisines_{task}_{split}",
         })
@@ -377,16 +486,16 @@ def load_cvqa(lang: str, image_cache_dir: str, logger: logging.Logger) -> list[d
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download Stage 3b VQA evaluation data (real benchmarks only).")
-    parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
+    parser.add_argument("--benchmark", required=True,
+                        choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa"])
     parser.add_argument("--languages", type=str, required=True,
-                        help="Comma-separated ISO codes, e.g. 'bn,id' for xgqa or 'id,jv' for worldcuisines/cvqa.")
+                        help="Comma-separated ISO codes, e.g. 'bn,id' for xgqa or 'id,jv' for worldcuisines_task1/cvqa.")
     parser.add_argument(
         "--output_dir", type=str, default=None,
         help="Defaults to $SCRATCH/M2-ALIGN/Stage3/data.",
     )
     parser.add_argument("--worldcuisines-split", type=str, default="test_small",
                         choices=["test_small", "test_large"])
-    parser.add_argument("--worldcuisines-task", type=str, default="task1", choices=["task1", "task2"])
     parser.add_argument(
         "--cvqa-image-cache-dir", type=str, default=None,
         help="Where each CVQA row's image is saved, as <id>.jpg. Defaults to "
@@ -406,9 +515,12 @@ def main() -> None:
         if args.benchmark == "xgqa":
             rows = load_xgqa(lang, logger)
             out_path = os.path.join(args.output_dir, "xgqa", f"{lang}.jsonl")
-        elif args.benchmark == "worldcuisines":
-            rows = load_worldcuisines(lang, args.worldcuisines_split, args.worldcuisines_task, logger)
-            out_path = os.path.join(args.output_dir, "worldcuisines", f"{lang}.jsonl")
+        elif args.benchmark == "worldcuisines_task1":
+            rows = load_worldcuisines(lang, args.worldcuisines_split, "task1", logger)
+            out_path = os.path.join(args.output_dir, "worldcuisines_task1", f"{lang}.jsonl")
+        elif args.benchmark == "worldcuisines_task2":
+            rows = load_worldcuisines(lang, args.worldcuisines_split, "task2", logger)
+            out_path = os.path.join(args.output_dir, "worldcuisines_task2", f"{lang}.jsonl")
         else:
             rows = load_cvqa(lang, args.cvqa_image_cache_dir, logger)
             out_path = os.path.join(args.output_dir, "cvqa", f"{lang}.jsonl")

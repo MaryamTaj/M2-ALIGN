@@ -16,8 +16,17 @@ run all of them -- they're independent evaluations, not interchangeable.
 
 xgqa           -- open-ended, English short answers. Active languages:
                   bn/de/ru/zh/pt/id/ko.
-worldcuisines  -- open-ended, English short answers (Indonesian, Javanese --
-                  deferred; no African-language coverage)
+worldcuisines_task1/_task2 -- open-ended. Two independent benchmark rows,
+                  both active for bn/ru/zh/id/ko/jv/si (no pt/de/mn/ga
+                  coverage):
+                    worldcuisines_task1 -- task1, Dish Name Prediction.
+                    worldcuisines_task2 -- task2, Dish Origin Prediction.
+                  Must match Stage3/evaluate.py's
+                  `evaluate_worldcuisines_open_ended`/`worldcuisines_correct`/
+                  `build_worldcuisines_prompt` exactly: dual-reference
+                  (native + English answer) substring-containment scoring,
+                  with the "single word/short phrase, in English"
+                  instruction kept -- see that module's docstring for why.
 cvqa           -- multiple-choice dataset, scored **open-ended via
                   answer-choice log-likelihood** -- must match
                   Stage3/evaluate.py's `evaluate_cvqa_open_ended`
@@ -58,6 +67,13 @@ def build_open_ended_prompt(question: str) -> str:
 def build_cvqa_open_ended_prompt(question: str) -> str:
     """Must match Stage3/evaluate.py's `build_cvqa_open_ended_prompt` exactly."""
     return f"Question: {question}"
+
+
+def build_worldcuisines_prompt(question: str) -> str:
+    """Must match Stage3/evaluate.py's `build_worldcuisines_prompt` exactly --
+    keeps the "single word/short phrase, in English" instruction, see that
+    function's docstring."""
+    return f"Question: {question}\nAnswer with a single word or short phrase, in English."
 
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -225,6 +241,14 @@ def open_ended_correct(pred_text: str, target: str) -> bool:
     return normalize_answer(pred_text) == normalize_answer(target)
 
 
+def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
+    """Must match Stage3/evaluate.py's `worldcuisines_correct` exactly --
+    case-insensitive substring containment against any dual-reference
+    answer, not exact match."""
+    pred_lower = pred_text.lower()
+    return any(ans.lower() in pred_lower for ans in answers if ans)
+
+
 # ─── Evaluation loops ────────────────────────────────────────────────────────
 
 def evaluate_open_ended(
@@ -244,6 +268,35 @@ def evaluate_open_ended(
         correct += int(ok)
         if idx < 5:
             logger.info("idx=%d question=%r pred=%r target=%r ok=%s", idx, row["query"][:80], pred, row["answer"], ok)
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
+def evaluate_worldcuisines_open_ended(
+    rows: list[dict], lang: str, image_resolver,
+    model, processor, device, max_examples: int | None, logger: logging.Logger,
+) -> float:
+    """Must match Stage3/evaluate.py's `evaluate_worldcuisines_open_ended`
+    exactly (generation path aside -- no NLLB/mapping here): scores against
+    `row["answers"]` (dual-reference list) with `worldcuisines_correct`,
+    prompted with `build_worldcuisines_prompt`."""
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    for idx, row in enumerate(tqdm(rows, desc=f"worldcuisines/{lang}")):
+        image = image_resolver(row)
+        if image is None:
+            continue
+        prompt = build_worldcuisines_prompt(row["query"])
+        pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
+        ok = worldcuisines_correct(pred, row["answers"])
+        correct += int(ok)
+        if idx < 5:
+            logger.info(
+                "idx=%d question=%r pred=%r targets=%r ok=%s",
+                idx, row["query"][:80], pred, row["answers"], ok,
+            )
     acc = correct / len(rows) * 100 if rows else 0.0
     logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
     return acc
@@ -298,16 +351,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Baseline Qwen3-VL evaluation on multilingual VQA benchmarks (no mapping layer)."
     )
-    parser.add_argument("--benchmark", required=True, choices=["xgqa", "worldcuisines", "cvqa"])
+    parser.add_argument("--benchmark", required=True,
+                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; id/jv for worldcuisines).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; "
+                              "bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir",
                         default=os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3", "data", "cvqa", "images"),
                         help="Image cache dir. For cvqa: pre-populated by Stage3/load_evaluation_data.py's "
                              "--cvqa-image-cache-dir, looked up by row id (no network access needed). "
-                             "For worldcuisines: a URL download cache, populated on the fly.")
+                             "For worldcuisines_task1/_task2: a URL download cache, populated on the fly.")
     parser.add_argument("--model-id", default=MODEL_ID)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--max-examples", type=int, default=None)
@@ -335,6 +390,8 @@ def main() -> None:
 
     if args.benchmark == "cvqa":
         evaluate_cvqa_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
+    elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
+        evaluate_worldcuisines_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
     else:
         evaluate_open_ended(rows, args.lang, resolver, model, processor, device, max_examples, logger)
 

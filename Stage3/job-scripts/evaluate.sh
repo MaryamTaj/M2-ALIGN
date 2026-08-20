@@ -11,13 +11,18 @@
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
 #SBATCH --output=/scratch/tajm/M2-ALIGN/Stage3/logs/stage3b_evaluate_%x_%j.log
 
-# Per-language xGQA evaluation -- LANG selects both the eval-data language
-# AND the checkpoint (every language, including Bengali, has its own
-# Stage2/Stage3b checkpoint at outputs/$LANG).
+# Per-language evaluation -- LANG selects both the eval-data language AND
+# the checkpoint (every language, including Bengali, has its own
+# Stage2/Stage3b checkpoint at outputs/$LANG). BENCHMARK selects which
+# eval set: xgqa, cvqa, worldcuisines_task1, or worldcuisines_task2
+# (see load_evaluation_data.py's module docstring for per-language
+# coverage of each).
 #
 # Usage:
-#   BENCHMARK=xgqa LANG=ru CHECKPOINT_STAGE=stage2  sbatch evaluate.sh
-#   BENCHMARK=xgqa LANG=ru CHECKPOINT_STAGE=stage3b sbatch evaluate.sh
+#   BENCHMARK=xgqa                LANG=ru CHECKPOINT_STAGE=stage2  sbatch evaluate.sh
+#   BENCHMARK=xgqa                LANG=ru CHECKPOINT_STAGE=stage3b sbatch evaluate.sh
+#   BENCHMARK=worldcuisines_task1 LANG=jv CHECKPOINT_STAGE=stage3b sbatch evaluate.sh
+#   BENCHMARK=worldcuisines_task2 LANG=jv CHECKPOINT_STAGE=stage3b sbatch evaluate.sh
 #   (repeat with LANG=de, LANG=zh, LANG=bn, ...)
 #
 # Optional: MAX_EXAMPLES=50 sbatch evaluate.sh

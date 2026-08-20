@@ -13,11 +13,15 @@
 
 # Raw Qwen3-VL VQA baseline -- no NLLB encoder, no Mapping layer. This is
 # the "does the base model already do this" reference point, parallel to
-# Baseline/evaluate_text.py for text reasoning.
+# Baseline/evaluate_text.py for text reasoning. BENCHMARK selects xgqa,
+# cvqa, worldcuisines_task1, or worldcuisines_task2 -- see
+# Baseline/evaluate.py's module docstring for per-language coverage of
+# each (same as Stage3/load_evaluation_data.py's).
 #
-# Usage — Bengali/xgqa is the only active combination right now
-# (Indonesian/Javanese, and worldcuisines/cvqa, are deferred):
-#   sbatch --export=BENCHMARK=xgqa,LANG=bn                     evaluate.sh
+# Usage:
+#   sbatch --export=BENCHMARK=xgqa,LANG=bn                       evaluate.sh
+#   sbatch --export=BENCHMARK=worldcuisines_task1,LANG=jv        evaluate.sh
+#   sbatch --export=BENCHMARK=worldcuisines_task2,LANG=jv        evaluate.sh
 #
 # Optional: sbatch --export=BENCHMARK=xgqa,LANG=bn,MAX_EXAMPLES=50 evaluate.sh
 
