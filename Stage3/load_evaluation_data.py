@@ -132,6 +132,8 @@ import io
 import json
 import logging
 import os
+import re
+import time
 from datetime import datetime
 
 import requests
@@ -383,6 +385,76 @@ def load_worldcuisines(lang: str, split: str, task: str, logger: logging.Logger)
     return rows
 
 
+_WIKIMEDIA_THUMB_RE = re.compile(
+    r"^(https?://upload\.wikimedia\.org/wikipedia/commons)/thumb/([^/]+)/([^/]+)/([^/]+)/[^/]+$"
+)
+
+
+def _wikimedia_original_url(url: str) -> str:
+    """Strip Wikimedia Commons' thumbnail sizing down to the original file.
+
+    A large share of WorldCuisines' `image_url` values point at a custom-
+    width Commons thumbnail, e.g.
+    `.../commons/thumb/1/13/Foo.jpg/1629px-Foo.jpg?download`. Verified
+    directly against a live run's logs: Wikimedia now rejects most custom
+    widths outright (`400 Use thumbnail sizes listed on
+    https://w.wiki/GHai` -- only a fixed allow-list of widths is generated
+    on demand). The plain, un-thumbed original --
+    `.../commons/1/13/Foo.jpg?download` -- carries no such restriction.
+    Non-thumb/non-Wikimedia URLs pass through unchanged.
+    """
+    base, sep, query = url.partition("?")
+    m = _WIKIMEDIA_THUMB_RE.match(base)
+    if not m:
+        return url
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)}/{m.group(4)}{sep}{query}"
+
+
+def _fetch_with_retry(
+    session: requests.Session, url: str, logger: logging.Logger,
+    max_attempts: int = 5, base_delay: float = 5.0,
+) -> bytes | None:
+    """GET *url* with exponential backoff on 429 / transient errors.
+
+    Verified necessary against a live run: firing ~9 req/s at
+    upload.wikimedia.org with no delay and a generic User-Agent got most
+    requests blocked within seconds (`429 ... contact noc@wikimedia.org`)
+    -- this is Wikimedia's anti-abuse layer, not a per-request rate limit
+    that a single retry clears. `session` should carry a compliant
+    User-Agent (see Wikimedia's User-Agent policy) to reduce the odds of
+    being blocked in the first place. Non-429 HTTP errors (e.g. the 400
+    `_wikimedia_original_url` is meant to avoid) are treated as permanent
+    -- no point retrying a request that will fail identically every time.
+    """
+    delay = base_delay
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = session.get(url, timeout=20)
+        except requests.exceptions.RequestException as e:
+            if attempt == max_attempts:
+                logger.warning("WorldCuisines image download failed for %s: %s", url, e)
+                return None
+            time.sleep(delay)
+            delay = min(delay * 2, 60.0)
+            continue
+        if resp.status_code == 429:
+            if attempt == max_attempts:
+                logger.warning("WorldCuisines image download failed for %s: repeated 429 (rate-limited)", url)
+                return None
+            retry_after = resp.headers.get("Retry-After", "")
+            wait = float(retry_after) if retry_after.replace(".", "", 1).isdigit() else delay
+            time.sleep(wait)
+            delay = min(delay * 2, 60.0)
+            continue
+        try:
+            resp.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            logger.warning("WorldCuisines image download failed for %s: %s", url, e)
+            return None
+        return resp.content
+    return None
+
+
 def download_worldcuisines_images(rows: list[dict], cache_dir: str, logger: logging.Logger) -> None:
     """Pre-fetch every row's image into a local cache, on the workstation
     node (which has internet), so evaluate.py's GPU job never needs its
@@ -390,33 +462,51 @@ def download_worldcuisines_images(rows: list[dict], cache_dir: str, logger: logg
     `load_cvqa` above saves images locally instead of leaving them for
     evaluate.py to fetch.
 
-    Cache key is `sha1(image_url).hexdigest() + ".jpg"`, saved as RGB
-    JPEG -- must match evaluate.py's `load_image_by_url` cache-path scheme
-    exactly (see that function), so its `os.path.exists(cache_path)` check
-    hits unconditionally and it never falls through to its own
-    `requests.get`. Idempotent and resumable: an already-cached URL is
-    skipped, so re-running after a partial failure only retries what's
-    missing. Shared across task1 and task2 (same image pool, since both
-    query the same set of dish photos) -- call this with the same
-    `cache_dir` for both.
+    Cache key is `sha1(image_url).hexdigest() + ".jpg"` -- keyed by the
+    *original* `image_url` as it appears in the row (matching evaluate.py's
+    `load_image_by_url` cache-path scheme exactly, so its
+    `os.path.exists(cache_path)` check hits unconditionally and it never
+    falls through to its own `requests.get`), even though the outgoing
+    HTTP request itself goes to `_wikimedia_original_url`'s de-thumbed
+    URL -- the cache key and the fetch URL are deliberately different
+    strings. Idempotent and resumable: an already-cached URL is skipped,
+    so re-running after a partial failure only retries what's missing.
+    Shared across task1 and task2 (same image pool, since both query the
+    same set of dish photos) -- call this with the same `cache_dir` for
+    both.
+
+    A small delay between requests plus `_fetch_with_retry`'s backoff
+    keeps this well under Wikimedia's abuse threshold (see that
+    function's docstring) -- at ~300 unique images per language this adds
+    a few minutes, not hours.
     """
     os.makedirs(cache_dir, exist_ok=True)
     urls = sorted({r["image_url"] for r in rows if r.get("image_url")})
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "M2-ALIGN-research/1.0 "
+            "(https://github.com/MaryamTaj/M2-ALIGN; academic multilingual-VQA research)"
+        ),
+    })
     n_cached = n_downloaded = n_failed = 0
     for url in urls:
         cache_path = os.path.join(cache_dir, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
         if os.path.exists(cache_path):
             n_cached += 1
             continue
+        content = _fetch_with_retry(session, _wikimedia_original_url(url), logger)
+        if content is None:
+            n_failed += 1
+            continue
         try:
-            resp = requests.get(url, timeout=15, headers={"User-Agent": "M2-ALIGN/1.0"})
-            resp.raise_for_status()
-            img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            img = Image.open(io.BytesIO(content)).convert("RGB")
             img.save(cache_path, format="JPEG", quality=85)
             n_downloaded += 1
         except Exception as e:
             n_failed += 1
-            logger.warning("WorldCuisines image download failed for %s: %s", url, e)
+            logger.warning("WorldCuisines image decode/save failed for %s: %s", url, e)
+        time.sleep(0.5)
     logger.info(
         "WorldCuisines images: %d already cached, %d newly downloaded, %d failed (of %d unique URLs) -> %s",
         n_cached, n_downloaded, n_failed, len(urls), cache_dir,
