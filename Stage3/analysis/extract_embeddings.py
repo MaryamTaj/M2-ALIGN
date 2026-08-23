@@ -202,13 +202,17 @@ def main() -> None:
     for lang in languages:
         path = os.path.join(args.eval_data_dir, f"{lang}.jsonl")
         rows = _read_jsonl(path)
-        rng.shuffle(rows)
-        rows = rows[: args.max_examples_per_lang]
         rows_by_lang[lang] = {r["id"]: r for r in rows}
-        logger.info("lang=%s: loaded %d rows (post-subsample) from %s", lang, len(rows), path)
+        logger.info("lang=%s: loaded %d rows from %s", lang, len(rows), path)
 
+    # Subsample the *shared* id set once, after intersecting -- shuffling each
+    # language's rows independently (before intersecting) would pick a
+    # different id subset per language and could leave zero ids shared once
+    # max_examples_per_lang is smaller than the per-language row count.
     shared_ids = set.intersection(*(set(d) for d in rows_by_lang.values())) if rows_by_lang else set()
     shared_ids = sorted(shared_ids)
+    rng.shuffle(shared_ids)
+    shared_ids = sorted(shared_ids[: args.max_examples_per_lang])
     logger.info("Shared ids across all %d languages: %d", len(languages), len(shared_ids))
     if not shared_ids:
         logger.error("No ids shared across all requested languages -- nothing to embed.")
