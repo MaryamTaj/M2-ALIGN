@@ -19,6 +19,8 @@ interchangeable:
     id, ko     xGQA + CVQA + WorldCuisines (task1 + task2)
     jv, si     CVQA + WorldCuisines (task1 + task2) -- no xGQA coverage
     mn, ga     CVQA only -- no xGQA or WorldCuisines coverage
+    am, ig, om CVQA only -- no xGQA or WorldCuisines coverage (big-headroom
+               low-resource languages; see the CVQA docstring below)
 
 CVQA is scored open-ended-via-likelihood -- see evaluate.py -- not as
 visible-choice multiple-choice, per the CVQA paper's own open-ended
@@ -104,6 +106,15 @@ CVQA (NeurIPS 2024) -- `afaji/cvqa` on the Hub, single `test` split,
     ('Irish','Ireland'). No Bengali or German coverage (German has no CVQA
     subset at all).
 
+    Amharic ('Amharic','Ethiopia'), Igbo ('Igbo','Nigeria'), and Oromo
+    ('Oromo','Ethiopia') were added to target languages where Qwen's own
+    multilingual coverage is weakest -- the mapping layer has the most
+    headroom to help there. Unlike the entries above, these three
+    Subset-string guesses are NOT yet verified against afaji/cvqa's actual
+    Subset column -- run with these languages once and check the logged
+    `_resolve_cvqa_subsets` output (candidates=...->matched Subsets=...)
+    before trusting downstream numbers.
+
 Usage
 -----
     # Run from anywhere -- output_dir defaults to $SCRATCH/M2-ALIGN/Stage3/data:
@@ -116,6 +127,11 @@ Usage
 
     # jv/mn/si/ga: CVQA only -- no xGQA coverage for any of these four.
     python Stage3/load_evaluation_data.py --benchmark cvqa --languages jv,mn,si,ga
+
+    # am/ig/om: CVQA only, big-headroom low-resource languages -- run this
+    # once and check the logged matched-Subsets output before trusting
+    # downstream numbers (see the CVQA docstring above).
+    python Stage3/load_evaluation_data.py --benchmark cvqa --languages am,ig,om
 
     # WorldCuisines task1 (Dish Name Prediction) -- active for
     # bn/ru/zh/id/ko/jv/si (formal register, krama for Javanese); no
@@ -201,6 +217,14 @@ CVQA_SUBSET_CANDIDATES: dict[str, list[str]] = {
     "bn": ["bengali"],
     "ru": ["russian"],
     "zh": ["china"],
+    # Big-headroom, low-resource languages with no xGQA/WorldCuisines
+    # coverage -- CVQA is their only VQA-eval path. Subset strings are
+    # unverified against afaji/cvqa's actual Subset column (unlike the
+    # entries above) -- confirm via _resolve_cvqa_subsets's logged
+    # candidates=...->matched Subsets=... output before trusting results.
+    "am": ["amharic"],
+    "ig": ["igbo"],
+    "om": ["oromo"],
 }
 
 

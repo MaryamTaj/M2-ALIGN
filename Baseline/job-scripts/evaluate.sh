@@ -14,7 +14,7 @@
 # Raw Qwen3-VL VQA baseline -- no NLLB encoder, no Mapping layer. This is
 # the "does the base model already do this" reference point, parallel to
 # Baseline/evaluate_text.py for text reasoning. BENCHMARK selects xgqa,
-# cvqa, worldcuisines_task1, or worldcuisines_task2 -- see
+# cvqa, cvqa_generation, worldcuisines_task1, or worldcuisines_task2 -- see
 # Baseline/evaluate.py's module docstring for per-language coverage of
 # each (same as Stage3/load_evaluation_data.py's).
 #
@@ -48,6 +48,7 @@ WORLDCUISINES_IMAGES_DIR="$DATA_ROOT/Stage3/data/worldcuisines/images"
 case "$BENCHMARK" in
   worldcuisines_task1) EVAL_DATA="$DATA_ROOT/Stage3/data/worldcuisines/task1/$LANG.jsonl" ;;
   worldcuisines_task2) EVAL_DATA="$DATA_ROOT/Stage3/data/worldcuisines/task2/$LANG.jsonl" ;;
+  cvqa_generation)     EVAL_DATA="$DATA_ROOT/Stage3/data/cvqa/$LANG.jsonl" ;;
   *)                   EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl" ;;
 esac
 

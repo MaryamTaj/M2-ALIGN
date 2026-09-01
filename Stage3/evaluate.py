@@ -61,6 +61,17 @@ cvqa           -- multiple-choice dataset, but scored **open-ended via
                   through xGQA above, per the policy note). Javanese also
                   covered but deferred. No German coverage -- CVQA has no
                   German subset at all.
+cvqa_generation -- diagnostic variant of cvqa: same eval data and same
+                  no-options-shown prompt (`build_cvqa_open_ended_prompt`),
+                  but scored via true `generate_answer` output
+                  (`evaluate_cvqa_generation`/`cvqa_generation_correct`,
+                  substring match against the gold choice text) instead of
+                  `score_choice_loglikelihood`'s choice-ranking. Tests
+                  whether part of the cvqa gap vs. Baseline is a
+                  log-likelihood/generation eval-format artifact rather
+                  than a capability gap -- see
+                  [[cvqa_worldcuisines_open_questions]] memory. Same
+                  language coverage as cvqa.
 """
 from __future__ import annotations
 
@@ -415,6 +426,16 @@ def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
     return any(ans.lower() in pred_lower for ans in answers if ans)
 
 
+def cvqa_generation_correct(pred_text: str, target: str) -> bool:
+    """Generation-scoring counterpart to `evaluate_cvqa_open_ended`'s
+    log-likelihood ranking: correct if the gold choice text appears
+    anywhere in the generated text, case-insensitive -- same
+    substring-containment convention as `worldcuisines_correct`, since CVQA
+    choices are free-text phrases (deity/dance-style/city names), not
+    single GQA-style tokens, so exact match would be overly strict."""
+    return target.lower() in pred_text.lower()
+
+
 # ---------------------------------------------------------------------------
 # Per-example result logging
 # ---------------------------------------------------------------------------
@@ -582,6 +603,53 @@ def evaluate_cvqa_open_ended(
     return acc
 
 
+def evaluate_cvqa_generation(
+    rows: list[dict],
+    lang: str,
+    image_resolver,
+    model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+    max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
+    logger: logging.Logger,
+    results_path: str | None = None,
+) -> float:
+    """Diagnostic counterpart to `evaluate_cvqa_open_ended`: same eval data
+    and same no-options-shown prompt (`build_cvqa_open_ended_prompt`), but
+    scored via true `generate_answer` output instead of
+    `score_choice_loglikelihood`'s per-choice ranking -- one generation call
+    per question (not one forward pass per choice). Scored against the gold
+    choice text (`choices[answer_index]`) with `cvqa_generation_correct`."""
+    nllb_code = NLLB_CODES[lang]
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"cvqa-generation/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            choices = row["choices"]
+            target_idx = int(row["answer_index"])
+            target = choices[target_idx]
+            prompt = build_cvqa_open_ended_prompt(row["query"])
+            pred = generate_answer(
+                image, row["query"], prompt, _VQA_SYSTEM, nllb_code,
+                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                max_new_tokens=16, visual_pixels=visual_pixels,
+                max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+            )
+            ok = cvqa_generation_correct(pred, target)
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, target=target, correct=bool(ok))
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r pred=%r target=%r ok=%s",
+                    idx, row["query"][:80], pred, target, ok,
+                )
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -599,10 +667,10 @@ def _read_jsonl(path: str) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
     parser.add_argument("--benchmark", required=True,
-                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa"])
+                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa", "cvqa_generation"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for cvqa; "
-                              "bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for "
+                              "cvqa/cvqa_generation; bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default=None,
@@ -634,7 +702,7 @@ def main() -> None:
     if args.benchmark == "xgqa" and not args.images_dir:
         parser.error("--images-dir is required for --benchmark xgqa")
     if args.image_cache_dir is None:
-        if args.benchmark == "cvqa":
+        if args.benchmark in ("cvqa", "cvqa_generation"):
             args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "cvqa", "images")
         elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
             args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "worldcuisines", "images")
@@ -651,7 +719,7 @@ def main() -> None:
 
     if args.benchmark == "xgqa":
         resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
-    elif args.benchmark == "cvqa":
+    elif args.benchmark in ("cvqa", "cvqa_generation"):
         resolver = lambda row: load_image_by_id(args.image_cache_dir, row["id"])
     else:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
@@ -666,6 +734,8 @@ def main() -> None:
 
     if args.benchmark == "cvqa":
         evaluate_cvqa_open_ended(rows, args.lang, **common_kw)
+    elif args.benchmark == "cvqa_generation":
+        evaluate_cvqa_generation(rows, args.lang, **common_kw)
     elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
         evaluate_worldcuisines_open_ended(rows, args.lang, **common_kw)
     else:

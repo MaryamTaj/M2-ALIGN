@@ -132,6 +132,13 @@ WIT_TO_NLLB: dict[str, str] = {
     "mn": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
     "si": "sin_Sinh",
     "ga": "gle_Latn",
+    # Big-headroom, low-resource CVQA-only languages (no xGQA coverage;
+    # see Stage3/load_evaluation_data.py's CVQA_SUBSET_CANDIDATES). WIT's
+    # native per-language coverage will likely be near-zero for these
+    # (tiny Igbo/Oromo Wikipedias) -- translated CC3M carries the load.
+    "am": "amh_Ethi",
+    "ig": "ibo_Latn",
+    "om": "gaz_Latn",  # NLLB-200 only ships West Central Oromo
 }
 
 WIT_CODE_TO_NAME: dict[str, str] = {
@@ -149,6 +156,9 @@ WIT_CODE_TO_NAME: dict[str, str] = {
     "mn": "Mongolian",
     "si": "Sinhalese",
     "ga": "Irish",
+    "am": "Amharic",
+    "ig": "Igbo",
+    "om": "Oromo",
 }
 
 # ---------------------------------------------------------------------------
@@ -168,9 +178,10 @@ DEFAULT_CC3M_SAMPLES = 200_000
 # Unicode block ranges keyed by the script suffix of the NLLB tag (e.g.
 # "ben_Beng" -> "Beng"). Only scripts visually distinguishable from Latin
 # are listed: for *_Latn languages (de, es, fr, hr, hu, it, nl, pl, pt, ro,
-# sw, tr, vi, id, jv, ga) script alone can't tell target-language text apart
-# from English attribution text, so those are left unchecked. Mongolian
-# ("mn") reuses "Cyrl" since NLLB's khk_Cyrl is written in Cyrillic script.
+# sw, tr, vi, id, jv, ga, ig, om) script alone can't tell target-language
+# text apart from English attribution text, so those are left unchecked.
+# Mongolian ("mn") reuses "Cyrl" since NLLB's khk_Cyrl is written in
+# Cyrillic script. "Ethi" (Amharic, "am") is listed below.
 SCRIPT_RANGES: dict[str, list[tuple[int, int]]] = {
     "Arab": [(0x0600, 0x06FF), (0x0750, 0x077F), (0x08A0, 0x08FF)],
     "Cyrl": [(0x0400, 0x04FF)],

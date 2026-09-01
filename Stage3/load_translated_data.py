@@ -60,6 +60,11 @@ LANG_TO_NLLB: dict[str, str] = {
     "Mongolian": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian, Cyrillic script
     "Sinhalese": "sin_Sinh",
     "Irish": "gle_Latn",
+    # Big-headroom, low-resource CVQA-only languages (no xGQA coverage;
+    # see Stage3/load_evaluation_data.py's CVQA_SUBSET_CANDIDATES).
+    "Amharic": "amh_Ethi",
+    "Igbo": "ibo_Latn",
+    "Oromo": "gaz_Latn",  # NLLB-200 only ships West Central Oromo
 }
 
 DEFAULT_N_SAMPLES = 30_000

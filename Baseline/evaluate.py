@@ -34,6 +34,14 @@ cvqa           -- multiple-choice dataset, scored **open-ended via
                   languages: am/ig/om/mn/si/ga, plus bn/ru/zh/pt/id/ko
                   (also run through xGQA, per the policy note). No German
                   coverage -- CVQA has no German subset at all.
+cvqa_generation -- diagnostic variant of cvqa: same eval data and prompt,
+                  scored via true generation
+                  (`evaluate_cvqa_generation`/`cvqa_generation_correct`,
+                  substring match against the gold choice text) instead of
+                  `score_choice_loglikelihood`'s choice-ranking -- must
+                  match Stage3/evaluate.py's `evaluate_cvqa_generation`
+                  exactly. Tests whether part of the cvqa gap vs. Stage3 is
+                  a log-likelihood/generation eval-format artifact.
 """
 from __future__ import annotations
 
@@ -250,6 +258,13 @@ def worldcuisines_correct(pred_text: str, answers: list[str]) -> bool:
     return any(ans.lower() in pred_lower for ans in answers if ans)
 
 
+def cvqa_generation_correct(pred_text: str, target: str) -> bool:
+    """Must match Stage3/evaluate.py's `cvqa_generation_correct` exactly --
+    correct if the gold choice text appears anywhere in the generated text,
+    case-insensitive."""
+    return target.lower() in pred_text.lower()
+
+
 # ─── Evaluation loops ────────────────────────────────────────────────────────
 
 def _open_results_writer(results_path: str | None):
@@ -365,6 +380,41 @@ def evaluate_cvqa_open_ended(
     return acc
 
 
+def evaluate_cvqa_generation(
+    rows: list[dict], lang: str, image_resolver,
+    model, processor, device, max_examples: int | None, logger: logging.Logger,
+    results_path: str | None = None,
+) -> float:
+    """Must match Stage3/evaluate.py's `evaluate_cvqa_generation` exactly
+    (generation path aside -- no NLLB/mapping here): same no-options-shown
+    prompt, scored via true generation against the gold choice text with
+    `cvqa_generation_correct` instead of log-likelihood ranking."""
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"cvqa-generation/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            choices = row["choices"]
+            target_idx = int(row["answer_index"])
+            target = choices[target_idx]
+            prompt = build_cvqa_open_ended_prompt(row["query"])
+            pred = generate_answer(image, prompt, _VQA_SYSTEM, model, processor, device, max_new_tokens=16)
+            ok = cvqa_generation_correct(pred, target)
+            correct += int(ok)
+            _write_result(rf, row, pred=pred, target=target, correct=bool(ok))
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r pred=%r target=%r ok=%s",
+                    idx, row["query"][:80], pred, target, ok,
+                )
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 def _read_jsonl(path: str) -> list[dict]:
@@ -382,10 +432,10 @@ def main() -> None:
         description="Baseline Qwen3-VL evaluation on multilingual VQA benchmarks (no mapping layer)."
     )
     parser.add_argument("--benchmark", required=True,
-                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa"])
+                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa", "cvqa_generation"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for cvqa; "
-                              "bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for "
+                              "cvqa/cvqa_generation; bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from Stage3/load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default=None,
@@ -410,7 +460,7 @@ def main() -> None:
         parser.error("--images-dir is required for --benchmark xgqa")
     if args.image_cache_dir is None:
         stage3_data = os.path.join(os.environ.get("SCRATCH", "."), "M2-ALIGN", "Stage3", "data")
-        if args.benchmark == "cvqa":
+        if args.benchmark in ("cvqa", "cvqa_generation"):
             args.image_cache_dir = os.path.join(stage3_data, "cvqa", "images")
         elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
             args.image_cache_dir = os.path.join(stage3_data, "worldcuisines", "images")
@@ -426,13 +476,18 @@ def main() -> None:
 
     if args.benchmark == "xgqa":
         resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
-    elif args.benchmark == "cvqa":
+    elif args.benchmark in ("cvqa", "cvqa_generation"):
         resolver = lambda row: load_image_by_id(args.image_cache_dir, row["id"])
     else:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
 
     if args.benchmark == "cvqa":
         evaluate_cvqa_open_ended(
+            rows, args.lang, resolver, model, processor, device, max_examples, logger,
+            results_path=args.results_jsonl,
+        )
+    elif args.benchmark == "cvqa_generation":
+        evaluate_cvqa_generation(
             rows, args.lang, resolver, model, processor, device, max_examples, logger,
             results_path=args.results_jsonl,
         )

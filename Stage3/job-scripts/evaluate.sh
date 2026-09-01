@@ -14,8 +14,8 @@
 # Per-language evaluation -- LANG selects both the eval-data language AND
 # the checkpoint (every language, including Bengali, has its own
 # Stage2/Stage3b checkpoint at outputs/$LANG). BENCHMARK selects which
-# eval set: xgqa, cvqa, worldcuisines_task1, or worldcuisines_task2
-# (see load_evaluation_data.py's module docstring for per-language
+# eval set: xgqa, cvqa, cvqa_generation, worldcuisines_task1, or
+# worldcuisines_task2 (see load_evaluation_data.py's module docstring for per-language
 # coverage of each).
 #
 # Usage:
@@ -54,6 +54,7 @@ WORLDCUISINES_IMAGES_DIR="$STAGE3/data/worldcuisines/images"
 case "$BENCHMARK" in
   worldcuisines_task1) EVAL_DATA="$STAGE3/data/worldcuisines/task1/$LANG.jsonl" ;;
   worldcuisines_task2) EVAL_DATA="$STAGE3/data/worldcuisines/task2/$LANG.jsonl" ;;
+  cvqa_generation)     EVAL_DATA="$STAGE3/data/cvqa/$LANG.jsonl" ;;
   *)                   EVAL_DATA="$STAGE3/data/$BENCHMARK/$LANG.jsonl" ;;
 esac
 

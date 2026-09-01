@@ -257,3 +257,4 @@ sbatch --export=BENCHMARK=worldcuisines_task2,LANG=id Baseline/job-scripts/evalu
 sbatch --export=BENCHMARK=worldcuisines_task2,LANG=ko Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=worldcuisines_task2,LANG=jv Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=worldcuisines_task2,LANG=si Baseline/job-scripts/evaluate.sh
+
