@@ -41,6 +41,9 @@
 #   LANG=mn sbatch --job-name=stage3b_load_translated_data_mn load_translated_data.sh
 #   LANG=si sbatch --job-name=stage3b_load_translated_data_si load_translated_data.sh
 #   LANG=ga sbatch --job-name=stage3b_load_translated_data_ga load_translated_data.sh
+#   LANG=am sbatch --job-name=stage3b_load_translated_data_am load_translated_data.sh
+#   LANG=ig sbatch --job-name=stage3b_load_translated_data_ig load_translated_data.sh
+#   LANG=om sbatch --job-name=stage3b_load_translated_data_om load_translated_data.sh
 
 set -euo pipefail
 
@@ -49,6 +52,7 @@ declare -A LANG_NAMES=(
   [ru]="Russian" [de]="German" [zh]="Chinese"
   [pt]="Portuguese" [id]="Indonesian" [ko]="Korean" [jv]="Javanese"
   [mn]="Mongolian" [si]="Sinhalese" [ga]="Irish"
+  [am]="Amharic" [ig]="Igbo" [om]="Oromo"
 )
 LANG="${LANG:-ru}"
 LANG_NAME="${LANG_NAMES[$LANG]:-}"

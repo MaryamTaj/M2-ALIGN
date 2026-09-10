@@ -37,10 +37,13 @@
 #   LANG=mn sbatch --job-name=stage2_load_translated_data_mn load_translated_data.sh
 #   LANG=si sbatch --job-name=stage2_load_translated_data_si load_translated_data.sh
 #   LANG=ga sbatch --job-name=stage2_load_translated_data_ga load_translated_data.sh
+#   LANG=am sbatch --job-name=stage2_load_translated_data_am load_translated_data.sh
+#   LANG=ig sbatch --job-name=stage2_load_translated_data_ig load_translated_data.sh
+#   LANG=om sbatch --job-name=stage2_load_translated_data_om load_translated_data.sh
 
 set -euo pipefail
 
-LANG_CODES="bn ru de zh pt id ko jv mn si ga"
+LANG_CODES="bn ru de zh pt id ko jv mn si ga am ig om"
 LANG="${LANG:-ru}"
 if [[ ! " $LANG_CODES " =~ " $LANG " ]]; then
   echo "ERROR: Unknown LANG=$LANG. Known codes: $LANG_CODES"

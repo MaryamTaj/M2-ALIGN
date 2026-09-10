@@ -56,11 +56,14 @@ cvqa           -- multiple-choice dataset, but scored **open-ended via
                   only, no visible options; pick whichever choice string the
                   model assigns the highest average per-token
                   log-probability to; compare that index against the gold
-                  label). Active languages: mn/si/ga (no xGQA coverage for
-                  any of these three), plus bn/ru/zh/pt/id/ko (also run
-                  through xGQA above, per the policy note). Javanese also
-                  covered but deferred. No German coverage -- CVQA has no
-                  German subset at all.
+                  label). Active languages: am/ig/om/mn/si/ga (no xGQA
+                  coverage for any of these six -- am/ig/om are big-headroom,
+                  low-resource languages added specifically to test where a
+                  mapping layer has the most room to help; see
+                  [[m2rb_vs_colleague_a2_comparison]] memory), plus
+                  bn/ru/zh/pt/id/ko (also run through xGQA above, per the
+                  policy note). Javanese also covered but deferred. No
+                  German coverage -- CVQA has no German subset at all.
 cvqa_generation -- diagnostic variant of cvqa: same eval data and same
                   no-options-shown prompt (`build_cvqa_open_ended_prompt`),
                   but scored via true `generate_answer` output
@@ -669,7 +672,7 @@ def main() -> None:
     parser.add_argument("--benchmark", required=True,
                          choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa", "cvqa_generation"])
     parser.add_argument("--lang", required=True,
-                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; pt/ko/mn/si/ga/bn/ru/zh for "
+                         help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for "
                               "cvqa/cvqa_generation; bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
     parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")

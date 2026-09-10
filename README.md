@@ -6,11 +6,6 @@ module load cudacore/.12.2.2
 module load arrow/18.1.0
 source $SCRATCH/venvs/m2-align/bin/activate
 
-# Stage3/analysis/ scripts (t-SNE, layer-wise retrieval) need numpy/scikit-learn/
-# matplotlib on top of the base install -- add once, on the workstation node
-# (compute nodes have no internet access):
-# pip install numpy scikit-learn matplotlib
-
 # (ON WORKSTATION ONLY)####################################################
 python -m venv .venv && source .venv/bin/activate
 pip install datasets requests pillow
@@ -72,6 +67,24 @@ tmux attach -t M2ALIGN:ga
 source .venv/bin/activate
 python Stage1/load_text.py --languages Irish      --output_dir $SCRATCH/M2-ALIGN/Stage1/data --n_samples 100000
 
+// Big-headroom, low-resource CVQA-only languages (no xGQA coverage).
+// Oromo is a low-mined NLLB pair -- check the log's "wrote N pairs" line;
+// it may fall short of 100000.
+tmux new-window -t M2ALIGN -n am
+tmux attach -t M2ALIGN:am
+source .venv/bin/activate
+python Stage1/load_text.py --languages Amharic    --output_dir $SCRATCH/M2-ALIGN/Stage1/data --n_samples 100000
+
+tmux new-window -t M2ALIGN -n ig
+tmux attach -t M2ALIGN:ig
+source .venv/bin/activate
+python Stage1/load_text.py --languages Igbo       --output_dir $SCRATCH/M2-ALIGN/Stage1/data --n_samples 100000
+
+tmux new-window -t M2ALIGN -n om
+tmux attach -t M2ALIGN:om
+source .venv/bin/activate
+python Stage1/load_text.py --languages Oromo      --output_dir $SCRATCH/M2-ALIGN/Stage1/data --n_samples 100000
+
 // Transfer to /scratch/tajm/M2-ALIGN/Stage1/data/ using Globus.
 ###########################################################################
 LANG=bn sbatch --job-name=stage1_train_bn Stage1/job-scripts/train.sh
@@ -85,13 +98,19 @@ LANG=jv sbatch --job-name=stage1_train_jv Stage1/job-scripts/train.sh
 LANG=mn sbatch --job-name=stage1_train_mn Stage1/job-scripts/train.sh
 LANG=si sbatch --job-name=stage1_train_si Stage1/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage1_train_ga Stage1/job-scripts/train.sh
+LANG=am sbatch --job-name=stage1_train_am Stage1/job-scripts/train.sh
+LANG=ig sbatch --job-name=stage1_train_ig Stage1/job-scripts/train.sh
+LANG=om sbatch --job-name=stage1_train_om Stage1/job-scripts/train.sh
 
 # (ON WORKSTATION ONLY)####################################################
 tmux new-window -t M2ALIGN -n Stage2
 source .venv/bin/activate
-python Stage2/load_base_data.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn --max-rows 2000000
+python Stage2/load_base_data.py --stats-only --languages pt,id,ko,jv,mn,si,ga,ru,de,zh,bn,am,ig,om --max-rows 2000000
 
-python Stage2/load_base_data.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga --n-per-language 1236 --cc3m-samples 50000 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
+// am/ig/om: native WIT coverage will likely be near-zero (tiny Igbo/Oromo
+// Wikipedias) -- the --stats-only run above tells you the real cap per
+// language; the translated-CC3M slice below carries the actual load.
+python Stage2/load_base_data.py --languages bn,ru,de,zh,pt,id,ko,jv,mn,si,ga,am,ig,om --n-per-language 1236 --cc3m-samples 50000 --output-dir $SCRATCH/M2-ALIGN/Stage2/data
 
 // Transfer to /scratch/tajm/M2-ALIGN/Stage2/data/ using Globus.
 ###########################################################################
@@ -106,6 +125,9 @@ LANG=jv sbatch --job-name=stage2_load_translated_data_jv Stage2/job-scripts/load
 LANG=mn sbatch --job-name=stage2_load_translated_data_mn Stage2/job-scripts/load_translated_data.sh
 LANG=si sbatch --job-name=stage2_load_translated_data_si Stage2/job-scripts/load_translated_data.sh
 LANG=ga sbatch --job-name=stage2_load_translated_data_ga Stage2/job-scripts/load_translated_data.sh
+LANG=am sbatch --job-name=stage2_load_translated_data_am Stage2/job-scripts/load_translated_data.sh
+LANG=ig sbatch --job-name=stage2_load_translated_data_ig Stage2/job-scripts/load_translated_data.sh
+LANG=om sbatch --job-name=stage2_load_translated_data_om Stage2/job-scripts/load_translated_data.sh
 
 LANG=bn sbatch --job-name=stage2_train_bn Stage2/job-scripts/train.sh
 LANG=ru sbatch --job-name=stage2_train_ru Stage2/job-scripts/train.sh
@@ -118,6 +140,9 @@ LANG=jv sbatch --job-name=stage2_train_jv Stage2/job-scripts/train.sh
 LANG=mn sbatch --job-name=stage2_train_mn Stage2/job-scripts/train.sh
 LANG=si sbatch --job-name=stage2_train_si Stage2/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage2_train_ga Stage2/job-scripts/train.sh
+LANG=am sbatch --job-name=stage2_train_am Stage2/job-scripts/train.sh
+LANG=ig sbatch --job-name=stage2_train_ig Stage2/job-scripts/train.sh
+LANG=om sbatch --job-name=stage2_train_om Stage2/job-scripts/train.sh
 
 # (ON WORKSTATION ONLY)####################################################
 // Stage 3 train QA
@@ -135,16 +160,16 @@ LANG=jv sbatch --job-name=stage3b_load_vqa_jv Stage3/job-scripts/load_translated
 LANG=mn sbatch --job-name=stage3b_load_vqa_mn Stage3/job-scripts/load_translated_data.sh
 LANG=si sbatch --job-name=stage3b_load_vqa_si Stage3/job-scripts/load_translated_data.sh
 LANG=ga sbatch --job-name=stage3b_load_vqa_ga Stage3/job-scripts/load_translated_data.sh
+LANG=am sbatch --job-name=stage3b_load_vqa_am Stage3/job-scripts/load_translated_data.sh
+LANG=ig sbatch --job-name=stage3b_load_vqa_ig Stage3/job-scripts/load_translated_data.sh
+LANG=om sbatch --job-name=stage3b_load_vqa_om Stage3/job-scripts/load_translated_data.sh
 
 # (ON WORKSTATION ONLY)####################################################
 // Stage 3 test QA
 python Stage3/load_evaluation_data.py --benchmark xgqa --languages bn,de,ru,zh,pt,id,ko \
   --output_dir Stage3/data
-python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga \
+python Stage3/load_evaluation_data.py --benchmark cvqa --languages bn,ru,zh,pt,id,ko,jv,mn,si,ga,am,ig,om \
   --output_dir Stage3/data
-// WorldCuisines images are pre-downloaded to Stage3/data/worldcuisines/images/
-// by these same commands (same reason CVQA's images are pre-saved above --
-// compute nodes have no internet, so this has to happen here).
 python Stage3/load_evaluation_data.py --benchmark worldcuisines_task1 --languages bn,ru,zh,id,ko,jv,si
 python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --languages bn,ru,zh,id,ko,jv,si
 
@@ -186,6 +211,9 @@ LANG=jv sbatch --job-name=stage3b_train_vqa_jv Stage3/job-scripts/train.sh
 LANG=mn sbatch --job-name=stage3b_train_vqa_mn Stage3/job-scripts/train.sh
 LANG=si sbatch --job-name=stage3b_train_vqa_si Stage3/job-scripts/train.sh
 LANG=ga sbatch --job-name=stage3b_train_vqa_ga Stage3/job-scripts/train.sh
+LANG=am sbatch --job-name=stage3b_train_vqa_am Stage3/job-scripts/train.sh
+LANG=ig sbatch --job-name=stage3b_train_vqa_ig Stage3/job-scripts/train.sh
+LANG=om sbatch --job-name=stage3b_train_vqa_om Stage3/job-scripts/train.sh
 
 ###########################################################################
 LANG=ru BENCHMARK=xgqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
@@ -206,6 +234,9 @@ LANG=ga BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evalua
 LANG=bn BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=ru BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 LANG=zh BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=am BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=ig BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
+LANG=om BENCHMARK=cvqa CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 
 BENCHMARK=worldcuisines_task1 LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
 BENCHMARK=worldcuisines_task1 LANG=ru CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate.sh
@@ -241,6 +272,9 @@ sbatch --export=BENCHMARK=cvqa,LANG=ga Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=cvqa,LANG=bn Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=cvqa,LANG=ru Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=cvqa,LANG=zh Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=am Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=ig Baseline/job-scripts/evaluate.sh
+sbatch --export=BENCHMARK=cvqa,LANG=om Baseline/job-scripts/evaluate.sh
 
 sbatch --export=BENCHMARK=worldcuisines_task1,LANG=bn Baseline/job-scripts/evaluate.sh
 sbatch --export=BENCHMARK=worldcuisines_task1,LANG=ru Baseline/job-scripts/evaluate.sh
