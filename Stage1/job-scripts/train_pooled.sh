@@ -17,7 +17,7 @@
 # concatenates and shuffles, so no train.py change is needed.
 #
 #   Reads   $SCRATCH/M2-ALIGN/Stage1/data/{Language}_to_English.jsonl for all 11
-#   Warm LLM = the Stage 0 MonoVQA checkpoint (frozen phi), NOT vanilla Qwen3-VL
+#   LLM     = vanilla Qwen3-VL-8B-Instruct (frozen; only the mapping layer trains)
 #   Saves   $SCRATCH/M2-ALIGN/Stage1/outputs/pooled/pytorch_model.bin
 #
 # WHY 4 GPUs / whole node:
@@ -39,7 +39,7 @@ set -euo pipefail
 # 11 pooled languages (Amharic/Igbo/Oromo excluded -- no data yet).
 LANG_NAMES="Bengali,Russian,German,Chinese,Portuguese,Indonesian,Korean,Javanese,Mongolian,Sinhalese,Irish"
 
-LLM_PATH="$SCRATCH/M2-ALIGN/Stage0/outputs/qwen3vl-8b-gqa"
+LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 DATA_ROOT="$SCRATCH/M2-ALIGN/Stage1"
 OUTPUT_DIR="$DATA_ROOT/outputs/pooled"
@@ -95,8 +95,7 @@ fi
 echo
 
 if [ ! -d "$LLM_PATH" ]; then
-  echo "ERROR: Stage 0 MonoVQA checkpoint not found: $LLM_PATH"
-  echo "       Run: sbatch Stage0/job-scripts/train.sh"
+  echo "ERROR: LLM snapshot path not found: $LLM_PATH"
   exit 1
 fi
 if [ ! -d "$MT_PATH" ]; then

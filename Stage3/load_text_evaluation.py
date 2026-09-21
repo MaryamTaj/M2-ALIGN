@@ -6,7 +6,7 @@ Stage3/load_vqa_evaluation.py) is fetched once and written to a local JSONL
 file, which train/evaluate scripts then read offline with no `datasets`
 network calls of their own. This script used to be the one exception: it
 only warmed the shared HuggingFace `datasets` cache, and
-Stage3/evaluate_text.py (and Baseline/evaluate_text.py) called
+Stage3/evaluate.py and Baseline/evaluate.py (--benchmark mgsm/msvamp) called
 `load_dataset(...)` directly at eval time, trusting that cache to still be
 populated. That made evaluation runs depend on an unversioned, unreadable
 Arrow cache instead of an inspectable file, and silently coupled Baseline's
@@ -19,10 +19,10 @@ Run this on a login node (which has internet access):
 
 Output layout (resolved relative to this script's location, not the cwd):
 
-    Stage3/data/stage3a_eval/mgsm/{lang}.jsonl
-    Stage3/data/stage3a_eval/msvamp/{lang}.jsonl
+    Stage3/data/mgsm/{lang}.jsonl
+    Stage3/data/msvamp/{lang}.jsonl
 
-Both Stage3/evaluate_text.py and Baseline/evaluate_text.py read from this
+Both Stage3/evaluate.py and Baseline/evaluate.py (mgsm/msvamp) read from this
 same directory by default, so both runs score the exact same rows.
 """
 from __future__ import annotations
@@ -107,13 +107,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--output_dir", type=str, default=None,
-        help="Defaults to Stage3/data/stage3a_eval (resolved relative to this "
+        help="Defaults to Stage3/data (resolved relative to this "
              "script's location, not the current working directory).",
     )
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = args.output_dir or os.path.join(script_dir, "data", "stage3a_eval")
+    output_dir = args.output_dir or os.path.join(script_dir, "data")
 
     logger = setup_logging(os.path.join(script_dir, "logs"))
 

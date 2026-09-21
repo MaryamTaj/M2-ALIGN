@@ -14,12 +14,15 @@ deterministic in (n_samples, seed) and independent of target language (see
 `sample_gqa` in load_translated_data.py), so it only needs to be produced once and
 Globus-transferred over, no matter how many languages read it afterward.
 
-Output JSONL fields per row: question, answer, vg_image_id
+Output: Stage3/data/en.jsonl, already in the per-language Stage 3 schema
+(vg_image_id, query, answer, source_language="English", nllb_lang_tag="eng_Latn"),
+so the same file is both the English rows of the pooled Stage 3b pool and
+the source load_translated_data.py translates into every other language.
 
 Usage
 -----
     python Stage3/load_base_data.py --n_samples 30000 --seed 42 \\
-        --output ./gqa_raw_sample.jsonl
+        --output ./en.jsonl
 """
 from __future__ import annotations
 
@@ -105,13 +108,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Sample GQA balanced train to portable JSONL.")
     parser.add_argument("--n_samples", type=int, default=30_000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output", type=str, default="./gqa_raw_sample.jsonl")
+    parser.add_argument("--output", type=str, default="./en.jsonl")
     args = parser.parse_args()
 
     rows = sample_gqa(args.n_samples, args.seed)
     with open(args.output, "w", encoding="utf-8") as f:
         for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.write(json.dumps({
+                "vg_image_id": row["vg_image_id"],
+                "query": row["question"],
+                "answer": row["answer"],
+                "source_language": "English",
+                "nllb_lang_tag": "eng_Latn",
+            }, ensure_ascii=False) + "\n")
     print(f"Wrote {len(rows)} rows -> {args.output}")
 
 

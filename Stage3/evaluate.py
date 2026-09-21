@@ -1,4 +1,4 @@
-"""Stage 3b evaluation on real/native multilingual VQA benchmarks.
+"""Stage 3b evaluation on real/native multilingual VQA and text-reasoning benchmarks.
 
 Loads the trained AugmentedVisualMindMerger (NLLB encoder -> mapping ->
 frozen Qwen3-VL + LLM-side query prefix) and evaluates on whichever of
@@ -75,6 +75,34 @@ cvqa_generation -- diagnostic variant of cvqa: same eval data and same
                   than a capability gap -- see
                   [[cvqa_worldcuisines_open_questions]] memory. Same
                   language coverage as cvqa.
+cvqa_mcq       -- closed-ended variant of cvqa: same eval data, but the
+                  four English choices are shown in the prompt as lettered
+                  options (`build_cvqa_mcq_prompt`) and scored by comparing
+                  the next-token logits of the option letters at the first
+                  answer position (`score_mcq_letters`) -- the options-shown
+                  MCQ protocol every published CVQA number uses. One forward
+                  pass per question. NLLB/X_m still see the native question
+                  only; the options go into the LLM-side `T` only. Also logs
+                  `letter_mass` (softmax probability on the option letters)
+                  to separate "the prefix broke the MCQ answer format" from
+                  "the prefix changed which option wins". Same language
+                  coverage as cvqa.
+mgsm / msvamp  -- text-only math, run through the SAME model with no image:
+                  ``pixel_values``/``image_grid_thw``/``mm_token_type_ids``
+                  are ``None``, so the prefix is ``[BOS] + X_m +
+                  [end_boundary] + T`` with ``T`` a plain chat template.
+                  Own prompt (`build_math_prompt`, `_MATH_SYSTEM`), greedy
+                  chain-of-thought (512 new tokens) and numeric scoring
+                  (`extract_math_answer`/`math_correct`), identical to
+                  Baseline/evaluate.py's mgsm/msvamp path, so the per-item
+                  comparison against the baseline isolates what the mapped
+                  prefix does to reasoning. --eval-data is
+                  Stage3/data/{mgsm,msvamp}/<lang>.jsonl
+                  (load_text_evaluation.py); MGSM/MSVAMP are parallel across
+                  languages, so ``en`` is the human-written original. The
+                  mapping checkpoint is loaded strictly (a silently-random
+                  mapping would make the probe meaningless).
+                  (Formerly Stage3/evaluate_text.py.)
 """
 from __future__ import annotations
 
@@ -114,6 +142,21 @@ NLLB_CODES: dict[str, str] = {
 
 _VQA_SYSTEM = "You are a helpful assistant that answers questions about images."
 
+# Text benchmarks: VQA languages plus the MGSM/MSVAMP-only ones.
+TEXT_BENCHMARKS = ("mgsm", "msvamp")
+TEXT_MAX_NEW_TOKENS = 512
+TEXT_NLLB_CODES: dict[str, str] = {
+    **NLLB_CODES,
+    "en": "eng_Latn",
+    "es": "spa_Latn",
+    "fr": "fra_Latn",
+    "ja": "jpn_Jpan",
+    "sw": "swh_Latn",
+    "th": "tha_Thai",
+    "te": "tel_Telu",
+}
+_MATH_SYSTEM = "You are a helpful assistant that solves math problems step by step."
+
 
 def build_open_ended_prompt(question: str) -> str:
     """Must match train.py's `_build_user_prompt` exactly."""
@@ -125,6 +168,32 @@ def build_cvqa_open_ended_prompt(question: str) -> str:
     and no "single word" instruction (CVQA answers are full phrases, e.g.
     city names, not necessarily one word)."""
     return f"Question: {question}"
+
+
+_OPTION_LETTERS = "ABCDEFGH"
+
+
+def build_cvqa_mcq_prompt(question: str, choices: list[str]) -> str:
+    """Options-shown CVQA prompt (standard LLaVA-style MCQ instruction).
+    Must match Baseline/evaluate.py's `build_cvqa_mcq_prompt` exactly."""
+    options = "\n".join(f"{_OPTION_LETTERS[i]}. {c}" for i, c in enumerate(choices))
+    return (
+        f"Question: {question}\n{options}\n"
+        "Answer with the option's letter from the given choices directly."
+    )
+
+
+def option_letter_token_ids(tokenizer, n_choices: int) -> list[int]:
+    """Token id of each bare option letter ("A", "B", ...) as the first
+    answer token. Raises if a letter is not a single token, since the MCQ
+    scorer reads exactly one next-token logit per option."""
+    ids = []
+    for letter in _OPTION_LETTERS[:n_choices]:
+        tok = tokenizer(letter, add_special_tokens=False)["input_ids"]
+        if len(tok) != 1:
+            raise ValueError(f"Option letter {letter!r} tokenizes to {tok}, expected a single token")
+        ids.append(tok[0])
+    return ids
 
 
 def build_worldcuisines_prompt(question: str) -> str:
@@ -401,6 +470,74 @@ def score_choice_loglikelihood(
     return (token_logprobs.sum() / n_choice_tok).item()
 
 
+@torch.inference_mode()
+def score_mcq_letters(
+    image: Image.Image,
+    question: str,
+    choices: list[str],
+    nllb_code: str,
+    model: AugmentedVisualMindMerger,
+    processor: AutoProcessor,
+    tokenizer_mt: NllbTokenizer,
+    tokenizer_llm: AutoTokenizer,
+    device: torch.device,
+    amp_dtype: torch.dtype,
+    visual_pixels: int,
+    max_mt_seq_len: int,
+    max_llm_seq_len: int,
+) -> tuple[list[float], float]:
+    """Next-token logits of the option letters after the options-shown MCQ prompt.
+
+    Same prefix construction as `score_choice_loglikelihood`
+    (`_build_prefix_raw`, NLLB fed the native question only), but the
+    options are rendered into `T` and a single forward pass over the prefix
+    is read at its last position -- the logit that predicts the first
+    answer token.
+
+    Returns:
+        ``(letter_logits, letter_mass)``: one logit per choice, and the total
+        softmax probability (over the full vocabulary) on the option letters.
+    """
+    tokenizer_mt.src_lang = nllb_code
+    enc_mt = tokenizer_mt(question, truncation=True, max_length=max_mt_seq_len, return_tensors="pt")
+    input_ids_mt = enc_mt["input_ids"].to(device)
+    mask_mt = enc_mt["attention_mask"].to(device)
+
+    prompt = build_cvqa_mcq_prompt(question, choices)
+    messages = _build_chat_messages_with_image(image, _VQA_SYSTEM, prompt)
+    enc_llm = processor.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt",
+        processor_kwargs={
+            "min_pixels": visual_pixels, "max_pixels": visual_pixels,
+            "truncation": True, "max_length": max_llm_seq_len,
+        },
+    )
+    pixel_values = enc_llm["pixel_values"].to(device)
+    image_grid_thw = enc_llm["image_grid_thw"].to(device)
+    input_ids_query_llm = enc_llm["input_ids"].to(device)
+    mask_query_llm = enc_llm["attention_mask"].to(device)
+    mm_token_type_ids_query_llm = enc_llm["mm_token_type_ids"].to(device)
+
+    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+        prefix_embeds, prefix_mask, mm_token_type_ids, deepstack_visual_embeds = model._build_prefix_raw(
+            pixel_values, image_grid_thw, input_ids_mt, mask_mt,
+            input_ids_query_llm, mask_query_llm, mm_token_type_ids_query_llm,
+        )
+        position_ids = model._compute_position_ids(mm_token_type_ids, image_grid_thw, prefix_mask)
+        visual_pos_masks = (mm_token_type_ids == 1) & (prefix_mask != 0)
+        text_model = model.model_llm.model.language_model
+        with _deepstack_injection(text_model, visual_pos_masks, deepstack_visual_embeds):
+            logits = model.model_llm(
+                inputs_embeds=prefix_embeds, attention_mask=prefix_mask, position_ids=position_ids,
+            ).logits
+
+    next_logits = logits[0, -1, :].float()
+    letter_ids = torch.tensor(option_letter_token_ids(tokenizer_llm, len(choices)), device=next_logits.device)
+    letter_logits = next_logits[letter_ids]
+    letter_mass = torch.softmax(next_logits, dim=-1)[letter_ids].sum().item()
+    return letter_logits.tolist(), letter_mass
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
@@ -653,9 +790,180 @@ def evaluate_cvqa_generation(
     return acc
 
 
+def log_mcq_summary(
+    pred_letters: list[str], gold_letters: list[str], letter_masses: list[float], logger: logging.Logger,
+) -> None:
+    """Predicted-vs-gold letter distribution and mean letter mass for a
+    `cvqa_mcq` run. Shared shape with Baseline/evaluate.py's copy."""
+    if not pred_letters:
+        return
+    letters = sorted(set(gold_letters) | set(pred_letters))
+    n = len(pred_letters)
+    pred_dist = {l: round(100 * pred_letters.count(l) / n, 1) for l in letters}
+    gold_dist = {l: round(100 * gold_letters.count(l) / n, 1) for l in letters}
+    logger.info("mcq predicted letter %%: %s | gold letter %%: %s", pred_dist, gold_dist)
+    logger.info(
+        "mcq letter_mass mean=%.4f min=%.4f (share < 0.5: %.1f%%)",
+        sum(letter_masses) / n, min(letter_masses), 100 * sum(m < 0.5 for m in letter_masses) / n,
+    )
+
+
+def evaluate_cvqa_mcq(
+    rows: list[dict],
+    lang: str,
+    image_resolver,
+    model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+    max_examples: int | None, visual_pixels: int, max_mt_seq_len: int, max_llm_seq_len: int,
+    logger: logging.Logger,
+    results_path: str | None = None,
+) -> float:
+    """Options-shown CVQA: lettered choices in the prompt, prediction = the
+    option letter with the highest next-token logit (`score_mcq_letters`)."""
+    nllb_code = NLLB_CODES[lang]
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    correct = 0
+    pred_letters, gold_letters, letter_masses = [], [], []
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"cvqa-mcq/{lang}")):
+            image = image_resolver(row)
+            if image is None:
+                continue
+            choices = row["choices"]
+            letter_logits, letter_mass = score_mcq_letters(
+                image, row["query"], choices, nllb_code,
+                model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+                visual_pixels=visual_pixels, max_mt_seq_len=max_mt_seq_len, max_llm_seq_len=max_llm_seq_len,
+            )
+            pred_idx = max(range(len(letter_logits)), key=lambda i: letter_logits[i])
+            target_idx = int(row["answer_index"])
+            ok = pred_idx == target_idx
+            correct += int(ok)
+            pred_letters.append(_OPTION_LETTERS[pred_idx])
+            gold_letters.append(_OPTION_LETTERS[target_idx])
+            letter_masses.append(letter_mass)
+            _write_result(
+                rf, row, pred=choices[pred_idx], pred_index=pred_idx, pred_letter=_OPTION_LETTERS[pred_idx],
+                letter_logits=[round(s, 4) for s in letter_logits], letter_mass=round(letter_mass, 4),
+                correct=bool(ok),
+            )
+            if idx < 5:
+                logger.info(
+                    "idx=%d question=%r choices=%r letter_logits=%r letter_mass=%.3f pred=%d target=%d ok=%s",
+                    idx, row["query"][:80], choices, [round(s, 3) for s in letter_logits], letter_mass,
+                    pred_idx, target_idx, ok,
+                )
+    log_mcq_summary(pred_letters, gold_letters, letter_masses, logger)
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Text-only math: mgsm / msvamp (prompt + scoring identical to
+# Baseline/evaluate.py's mgsm/msvamp path)
+# ---------------------------------------------------------------------------
+
+def build_math_prompt(question: str) -> str:
+    return f"{question}\n\nLet's think step by step."
+
+
+def extract_math_answer(text: str) -> str | None:
+    m = re.search(r"(?:the\s+)?answer\s+is[:\s]+(-?[\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+    if m:
+        return m.group(1).replace(",", "")
+    m = re.search(r"####\s*(-?[\d,]+(?:\.\d+)?)", text)
+    if m:
+        return m.group(1).replace(",", "")
+    nums = re.findall(r"-?[\d,]+(?:\.\d+)?", text)
+    return nums[-1].replace(",", "") if nums else None
+
+
+def math_correct(pred_text: str, target: str) -> bool:
+    pred = extract_math_answer(pred_text)
+    if pred is None:
+        return False
+    try:
+        return float(pred) == float(target.replace(",", ""))
+    except ValueError:
+        return pred.strip() == target.strip()
+
+
+def generate_text(
+    question: str,
+    nllb_code: str,
+    model: AugmentedVisualMindMerger,
+    tokenizer_mt: NllbTokenizer,
+    tokenizer_llm: AutoTokenizer,
+    device: torch.device,
+    amp_dtype: torch.dtype,
+    max_new_tokens: int,
+    max_mt_seq_len: int,
+) -> str:
+    """Generate for one text-only question: mapped NLLB prefix + plain chat template, no image."""
+    tokenizer_mt.src_lang = nllb_code
+    enc_mt = tokenizer_mt(question, truncation=True, max_length=max_mt_seq_len, return_tensors="pt")
+
+    messages = [
+        {"role": "system", "content": _MATH_SYSTEM},
+        {"role": "user", "content": build_math_prompt(question)},
+    ]
+    enc_llm = tokenizer_llm.apply_chat_template(
+        messages, tokenize=True, add_generation_prompt=True, return_tensors="pt", return_dict=True,
+    )
+
+    gen_kw = dict(do_sample=False, max_new_tokens=max_new_tokens, eos_token_id=tokenizer_llm.eos_token_id)
+    with torch.autocast(device_type="cuda", dtype=amp_dtype):
+        out_texts = model.generate(
+            pixel_values=None, image_grid_thw=None,
+            input_ids_mt=enc_mt["input_ids"].to(device), attention_mask_mt=enc_mt["attention_mask"].to(device),
+            input_ids_query_llm=enc_llm["input_ids"].to(device), mask_query_llm=enc_llm["attention_mask"].to(device),
+            mm_token_type_ids_query_llm=None,
+            tokenizer_llm=tokenizer_llm, generation_kwargs=gen_kw,
+        )
+    return (out_texts[0] if out_texts else "").strip()
+
+
+def evaluate_math(
+    rows: list[dict],
+    lang: str,
+    task: str,
+    model: AugmentedVisualMindMerger,
+    tokenizer_mt: NllbTokenizer,
+    tokenizer_llm: AutoTokenizer,
+    device: torch.device,
+    amp_dtype: torch.dtype,
+    max_examples: int | None,
+    max_mt_seq_len: int,
+    logger: logging.Logger,
+    results_path: str | None = None,
+) -> float:
+    if max_examples is not None:
+        rows = rows[:max_examples]
+    nllb_code = TEXT_NLLB_CODES[lang]
+    logger.info("task=%s lang=%s nllb=%s n=%d", task, lang, nllb_code, len(rows))
+    correct = 0
+    with _open_results_writer(results_path) as rf:
+        for idx, row in enumerate(tqdm(rows, desc=f"{task}/{lang}")):
+            pred = generate_text(
+                row["question"], nllb_code, model, tokenizer_mt, tokenizer_llm,
+                device, amp_dtype, TEXT_MAX_NEW_TOKENS, max_mt_seq_len,
+            )
+            ok = math_correct(pred, row["answer"])
+            correct += int(ok)
+            _write_result(rf, {"idx": idx, "question": row["question"], "answer": row["answer"]},
+                          pred=pred, extracted=extract_math_answer(pred), correct=ok)
+            if idx < 5:
+                logger.info("idx=%d question=%r pred=%r extracted=%r target=%s ok=%s",
+                            idx, row["question"][:80], pred[:300], extract_math_answer(pred), row["answer"], ok)
+    acc = correct / len(rows) * 100 if rows else 0.0
+    logger.info("lang=%s accuracy=%.2f%% (n=%d)", lang, acc, len(rows))
+    return acc
+
 
 def _read_jsonl(path: str) -> list[dict]:
     rows = []
@@ -668,13 +976,15 @@ def _read_jsonl(path: str) -> list[dict]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA evaluation.")
+    parser = argparse.ArgumentParser(description="Stage 3b AugmentedVisualMindMerger VQA + text evaluation.")
     parser.add_argument("--benchmark", required=True,
-                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa", "cvqa_generation"])
+                         choices=["xgqa", "worldcuisines_task1", "worldcuisines_task2", "cvqa", "cvqa_generation",
+                                  "cvqa_mcq", *TEXT_BENCHMARKS])
     parser.add_argument("--lang", required=True,
                          help="ISO code (bn/de/ru/zh/pt/id/ko for xgqa; am/ig/om/pt/ko/mn/si/ga/bn/ru/zh for "
-                              "cvqa/cvqa_generation; bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
-    parser.add_argument("--eval-data", required=True, help="JSONL from load_evaluation_data.py.")
+                              "cvqa/cvqa_generation/cvqa_mcq; bn/ru/zh/id/ko/jv/si for worldcuisines_task1/worldcuisines_task2).")
+    parser.add_argument("--eval-data", required=True,
+                        help="JSONL from load_evaluation_data.py (VQA) or load_text_evaluation.py (mgsm/msvamp).")
     parser.add_argument("--images-dir", default=None, help="Local GQA images dir (required for --benchmark xgqa).")
     parser.add_argument("--image-cache-dir", default=None,
                         help="Image cache dir. Defaults to <Stage3 data>/cvqa/images (cvqa) or "
@@ -702,10 +1012,12 @@ def main() -> None:
                               "and qualitative_cases.py. Parent dir is created if missing.")
     args = parser.parse_args()
 
+    if args.benchmark in TEXT_BENCHMARKS and args.lang not in TEXT_NLLB_CODES:
+        parser.error(f"--lang {args.lang} has no NLLB code for {args.benchmark}; known: {sorted(TEXT_NLLB_CODES)}")
     if args.benchmark == "xgqa" and not args.images_dir:
         parser.error("--images-dir is required for --benchmark xgqa")
     if args.image_cache_dir is None:
-        if args.benchmark in ("cvqa", "cvqa_generation"):
+        if args.benchmark in ("cvqa", "cvqa_generation", "cvqa_mcq"):
             args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "cvqa", "images")
         elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
             args.image_cache_dir = os.path.join(SCRATCH_ROOT, "data", "worldcuisines", "images")
@@ -716,13 +1028,26 @@ def main() -> None:
     rows = _read_jsonl(args.eval_data)
     logger.info("Loaded %d rows from %s", len(rows), args.eval_data)
 
+    if args.benchmark in TEXT_BENCHMARKS:
+        model, _processor, tokenizer_mt, tokenizer_llm, device, amp_dtype = load_model(
+            args.llm_path, args.mt_path, args.mapping_ckpt, args.local_files_only, TEXT_MAX_NEW_TOKENS, logger,
+        )
+        # load_model only warns on key mismatches; fail loudly instead.
+        ckpt = torch.load(args.mapping_ckpt, map_location="cpu")
+        model.mapping.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=True)
+        evaluate_math(
+            rows, args.lang, args.benchmark, model, tokenizer_mt, tokenizer_llm, device, amp_dtype,
+            max_examples, args.max_mt_seq_len, logger, results_path=args.results_jsonl,
+        )
+        return
+
     model, processor, tokenizer_mt, tokenizer_llm, device, amp_dtype = load_model(
         args.llm_path, args.mt_path, args.mapping_ckpt, args.local_files_only, args.max_gen_len, logger,
     )
 
     if args.benchmark == "xgqa":
         resolver = lambda row: load_image_by_id(args.images_dir, row["vg_image_id"])
-    elif args.benchmark in ("cvqa", "cvqa_generation"):
+    elif args.benchmark in ("cvqa", "cvqa_generation", "cvqa_mcq"):
         resolver = lambda row: load_image_by_id(args.image_cache_dir, row["id"])
     else:
         resolver = lambda row: load_image_by_url(row["image_url"], args.image_cache_dir)
@@ -739,6 +1064,8 @@ def main() -> None:
         evaluate_cvqa_open_ended(rows, args.lang, **common_kw)
     elif args.benchmark == "cvqa_generation":
         evaluate_cvqa_generation(rows, args.lang, **common_kw)
+    elif args.benchmark == "cvqa_mcq":
+        evaluate_cvqa_mcq(rows, args.lang, **common_kw)
     elif args.benchmark in ("worldcuisines_task1", "worldcuisines_task2"):
         evaluate_worldcuisines_open_ended(rows, args.lang, **common_kw)
     else:

@@ -558,7 +558,7 @@ class AugmentedVisualMindMerger(nn.Module):
     def _compute_position_ids(
         self,
         mm_token_type_ids: torch.Tensor,
-        image_grid_thw: torch.Tensor,
+        image_grid_thw: torch.Tensor | None,
         attention_mask: torch.Tensor,
     ) -> torch.Tensor:
         """M-RoPE position ids for a mixed vision/text prefix.
@@ -573,7 +573,9 @@ class AugmentedVisualMindMerger(nn.Module):
         Args:
             mm_token_type_ids: ``[B, seq]`` (0=text, 1=image), matching the
                 layout ``get_rope_index`` expects.
-            image_grid_thw: ``[B, 3]`` patch grid dimensions.
+            image_grid_thw: ``[B, 3]`` patch grid dimensions, or ``None``
+                for a text-only prefix (all-zero *mm_token_type_ids*), where
+                ``get_rope_index`` returns plain 1D positions on all 3 axes.
             attention_mask: ``[B, seq]``, 1 = real token.
 
         Returns:
@@ -590,14 +592,14 @@ class AugmentedVisualMindMerger(nn.Module):
 
     def _build_prefix_raw(
         self,
-        pixel_values: torch.Tensor,
-        image_grid_thw: torch.Tensor,
+        pixel_values: torch.Tensor | None,
+        image_grid_thw: torch.Tensor | None,
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
-        mm_token_type_ids_query_llm: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[torch.Tensor]]:
+        mm_token_type_ids_query_llm: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[torch.Tensor] | None]:
         """Assemble ``[BOS] + X_m + [end_boundary] + T`` without squeeze_pad.
 
         Vision features are scattered into ``T``'s ``<|image_pad|>``
@@ -624,9 +626,16 @@ class AugmentedVisualMindMerger(nn.Module):
         squeeze_pad is applied separately in :meth:`forward` (over the full
         sequence including labels) and in :meth:`generate` (over the prefix).
 
+        Text-only inputs (e.g. MGSM/MSVAMP) pass ``pixel_values=None``,
+        ``image_grid_thw=None`` and ``mm_token_type_ids_query_llm=None``:
+        ``T`` is then a plain chat template with no ``<|image_pad|>``
+        placeholders, the vision tower is skipped, and the returned
+        *deepstack_visual_embeds* is ``None`` (a no-op for
+        :func:`_deepstack_injection`). The image path is unchanged.
+
         Args:
-            pixel_values: ``[total_patches, C, pH, pW]``.
-            image_grid_thw: ``[B, 3]`` patch grid dimensions.
+            pixel_values: ``[total_patches, C, pH, pW]``, or ``None``.
+            image_grid_thw: ``[B, 3]`` patch grid dimensions, or ``None``.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
             input_ids_query_llm: LLM token ids for the rendered chat
@@ -636,7 +645,8 @@ class AugmentedVisualMindMerger(nn.Module):
             mask_query_llm: Attention mask for *input_ids_query_llm*.
             mm_token_type_ids_query_llm: Per-token type tag for
                 *input_ids_query_llm* (0=text, 1=image), as returned by the
-                processor alongside *input_ids_query_llm*.
+                processor alongside *input_ids_query_llm*; ``None`` for a
+                text-only ``T`` (treated as all zeros).
 
         Returns:
             ``(llm_embeds, llm_mask, mm_token_type_ids, deepstack_visual_embeds)``:
@@ -645,21 +655,24 @@ class AugmentedVisualMindMerger(nn.Module):
             see :meth:`_compute_position_ids`); the last is a 3-element
             list of ``[num_image_tokens, llm_dim]`` tensors, aligned in
             flattened row-major order with the ``True`` positions of
-            ``mm_token_type_ids == 1``.
+            ``mm_token_type_ids == 1`` -- or ``None`` when there is no image.
         """
         B = input_ids_mt.size(0)
         device = input_ids_mt.device
         dtype = self.llm_dtype
 
-        vision_out = self.model_llm.model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
-        image_embeds = torch.cat(vision_out.pooler_output, dim=0).to(dtype)
-        deepstack_visual_embeds = [feat.to(dtype) for feat in vision_out.deepstack_features]
-
         t_embed = self.llm_embedding_layer(input_ids_query_llm).to(dtype)
-        image_mask, _ = self.model_llm.model.get_placeholder_mask(
-            input_ids_query_llm, inputs_embeds=t_embed, image_features=image_embeds,
-        )
-        t_embed = t_embed.masked_scatter(image_mask, image_embeds)
+        if pixel_values is None:
+            deepstack_visual_embeds = None
+            mm_token_type_ids_query_llm = torch.zeros_like(mask_query_llm)
+        else:
+            vision_out = self.model_llm.model.get_image_features(pixel_values, image_grid_thw, return_dict=True)
+            image_embeds = torch.cat(vision_out.pooler_output, dim=0).to(dtype)
+            deepstack_visual_embeds = [feat.to(dtype) for feat in vision_out.deepstack_features]
+            image_mask, _ = self.model_llm.model.get_placeholder_mask(
+                input_ids_query_llm, inputs_embeds=t_embed, image_features=image_embeds,
+            )
+            t_embed = t_embed.masked_scatter(image_mask, image_embeds)
 
         mt_out = self.encoder_mt(
             input_ids=input_ids_mt,
@@ -684,21 +697,25 @@ class AugmentedVisualMindMerger(nn.Module):
 
     def forward(
         self,
-        pixel_values: torch.Tensor,
-        image_grid_thw: torch.Tensor,
+        pixel_values: torch.Tensor | None,
+        image_grid_thw: torch.Tensor | None,
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
-        mm_token_type_ids_query_llm: torch.Tensor,
+        mm_token_type_ids_query_llm: torch.Tensor | None,
         labels: torch.Tensor,
         mask_label: torch.Tensor,
     ) -> torch.Tensor:
         """Compute teacher-forcing cross-entropy loss for VQA.
 
+        Pass ``None`` for *pixel_values*, *image_grid_thw* and
+        *mm_token_type_ids_query_llm* to train on a text-only example (see
+        :meth:`_build_prefix_raw`).
+
         Args:
-            pixel_values: ``[total_patches, C, pH, pW]`` from the processor.
-            image_grid_thw: ``[B, 3]`` patch grid dimensions.
+            pixel_values: ``[total_patches, C, pH, pW]`` from the processor, or ``None``.
+            image_grid_thw: ``[B, 3]`` patch grid dimensions, or ``None``.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
             input_ids_query_llm: LLM token ids for the rendered chat
@@ -750,21 +767,25 @@ class AugmentedVisualMindMerger(nn.Module):
     @torch.inference_mode()
     def generate(
         self,
-        pixel_values: torch.Tensor,
-        image_grid_thw: torch.Tensor,
+        pixel_values: torch.Tensor | None,
+        image_grid_thw: torch.Tensor | None,
         input_ids_mt: torch.Tensor,
         attention_mask_mt: torch.Tensor,
         input_ids_query_llm: torch.Tensor,
         mask_query_llm: torch.Tensor,
-        mm_token_type_ids_query_llm: torch.Tensor,
+        mm_token_type_ids_query_llm: torch.Tensor | None,
         tokenizer_llm,
         generation_kwargs: dict | None = None,
     ) -> list[str]:
-        """Generate short answers for a batch of VQA examples.
+        """Generate answers for a batch of VQA (or text-only) examples.
+
+        Pass ``None`` for *pixel_values*, *image_grid_thw* and
+        *mm_token_type_ids_query_llm* for text-only inputs such as
+        MGSM/MSVAMP (see :meth:`_build_prefix_raw`).
 
         Args:
-            pixel_values: ``[total_patches, C, pH, pW]``.
-            image_grid_thw: ``[B, 3]``.
+            pixel_values: ``[total_patches, C, pH, pW]``, or ``None``.
+            image_grid_thw: ``[B, 3]``, or ``None``.
             input_ids_mt: NLLB token ids for the question, ``[B, mt_seq]``.
             attention_mask_mt: NLLB attention mask, ``[B, mt_seq]``.
             input_ids_query_llm: LLM token ids for the rendered chat
@@ -787,7 +808,6 @@ class AugmentedVisualMindMerger(nn.Module):
         llm_embeds, llm_mask, _, position_ids, mm_token_type_ids = _squeeze_pad(
             llm_embeds, llm_mask, position_ids, mm_token_type_ids
         )
-        prefix_len = llm_embeds.size(1)
         visual_pos_masks = (mm_token_type_ids == 1) & (llm_mask != 0)
 
         gen_kw: dict = dict(
@@ -804,6 +824,9 @@ class AugmentedVisualMindMerger(nn.Module):
         text_model = self.model_llm.model.language_model
         with _deepstack_injection(text_model, visual_pos_masks, deepstack_visual_embeds):
             ids = self.model_llm.generate(**gen_kw)
-        new_ids = ids[:, prefix_len:] if ids.shape[1] > prefix_len else ids
-        return tokenizer_llm.batch_decode(new_ids, skip_special_tokens=True,
+        # Given only inputs_embeds (no input_ids), generate() returns only the
+        # new tokens. The old `ids[:, prefix_len:]` slice cut the start of any
+        # output longer than the prefix -- never hit by 16-token VQA answers,
+        # but hit by 512-token MGSM/MSVAMP chain-of-thought.
+        return tokenizer_llm.batch_decode(ids, skip_special_tokens=True,
                                           clean_up_tokenization_spaces=False)

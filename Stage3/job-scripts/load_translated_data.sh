@@ -16,7 +16,7 @@
 # per language (Stage3/data/$LANG.jsonl) -- does not touch Bengali's
 # Stage3/data/stage3b.
 #
-# Reads the pre-sampled GQA rows from Stage3/data/english.jsonl (produced
+# Reads the pre-sampled GQA rows from Stage3/data/en.jsonl (produced
 # offline by Stage3/load_base_data.py on a workstation and Globus-
 # transferred here -- see the README) instead of calling load_dataset()
 # itself, so this job makes NO network calls at all, not even to the
@@ -68,7 +68,7 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 NLLB_MODEL="$HOME/.cache/huggingface/hub/models--facebook--nllb-200-3.3B/snapshots/1a07f7d195896b2114afcb79b7b57ab512e7b43e"
 DATA_DIR="$DATA_ROOT/Stage3/data"
 OUT_FILE="$DATA_DIR/$LANG.jsonl"
-GQA_JSONL="$DATA_DIR/english.jsonl"
+GQA_JSONL="$DATA_DIR/en.jsonl"
 
 echo "=== Job info ==="
 date

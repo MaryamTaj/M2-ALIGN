@@ -13,14 +13,21 @@
 
 # Evaluation for the POOLED pipeline. Unlike evaluate.sh, LANG selects ONLY
 # the eval-data language -- the mapping checkpoint is the single shared
-# outputs/pooled one for every language, and the LLM is the Stage 0 MonoVQA
-# checkpoint (frozen phi), matching what the pooled Stage 1/2/3b runs used.
+# outputs/pooled one for every language, and the LLM is vanilla (frozen)
+# Qwen3-VL-8B-Instruct, matching what the pooled Stage 1/2/3b runs used.
+#
+# BENCHMARK=mgsm|msvamp runs the SAME model with no image
+# (Stage3/evaluate.py text path: pixel_values=None, so the vision tower is
+# skipped) on $STAGE3/data/{mgsm,msvamp}/$LANG.jsonl, via the same
+# Stage3/evaluate.py call; per-item outputs are always written.
 #
 # CHECKPOINT_STAGE = stage2 (pooled, before VQA aug) or stage3b (pooled, after).
 #
 # Usage:
 #   BENCHMARK=xgqa LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_pooled.sh
 #   BENCHMARK=cvqa LANG=jv CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_pooled.sh
+#   BENCHMARK=mgsm LANG=bn CHECKPOINT_STAGE=stage3b sbatch Stage3/job-scripts/evaluate_pooled.sh
+#   (mgsm langs: bn de ru zh en es fr ja sw th te; msvamp: same minus te)
 #   (repeat over LANG in bn de ru zh pt id ko  for xgqa;
 #              in bn ru zh pt id ko jv mn si ga for cvqa)
 #
@@ -33,13 +40,14 @@ LANG="${LANG:-bn}"
 CHECKPOINT_STAGE="${CHECKPOINT_STAGE:-stage3b}"
 MAX_EXAMPLES="${MAX_EXAMPLES:-}"
 RESULTS_JSONL="${RESULTS_JSONL:-}"
+case "${BENCHMARK:-}" in mgsm|msvamp) RESULTS_JSONL=1 ;; esac  # text: always keep per-item outputs
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
 DATA_ROOT="$SCRATCH/M2-ALIGN"
 STAGE2="$DATA_ROOT/Stage2"
 STAGE3="$DATA_ROOT/Stage3"
 
-LLM_PATH="$SCRATCH/M2-ALIGN/Stage0/outputs/qwen3vl-8b-gqa"
+LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 WORLDCUISINES_IMAGES_DIR="$STAGE3/data/worldcuisines/images"
@@ -47,7 +55,7 @@ WORLDCUISINES_IMAGES_DIR="$STAGE3/data/worldcuisines/images"
 case "$BENCHMARK" in
   worldcuisines_task1) EVAL_DATA="$STAGE3/data/worldcuisines/task1/$LANG.jsonl" ;;
   worldcuisines_task2) EVAL_DATA="$STAGE3/data/worldcuisines/task2/$LANG.jsonl" ;;
-  cvqa_generation)     EVAL_DATA="$STAGE3/data/cvqa/$LANG.jsonl" ;;
+  cvqa_generation|cvqa_mcq) EVAL_DATA="$STAGE3/data/cvqa/$LANG.jsonl" ;;
   *)                   EVAL_DATA="$STAGE3/data/$BENCHMARK/$LANG.jsonl" ;;
 esac
 
@@ -99,7 +107,7 @@ echo "EVAL_DATA=$EVAL_DATA"
 echo
 
 if [ ! -d "$LLM_PATH" ]; then
-  echo "ERROR: Stage 0 MonoVQA checkpoint not found: $LLM_PATH"
+  echo "ERROR: LLM snapshot path not found: $LLM_PATH"
   exit 1
 fi
 if [ ! -d "$MT_PATH" ]; then
@@ -112,7 +120,10 @@ if [ ! -f "$MAPPING_CKPT" ]; then
 fi
 if [ ! -f "$EVAL_DATA" ]; then
   echo "ERROR: Eval data not found: $EVAL_DATA"
-  echo "       Run: python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG"
+  case "$BENCHMARK" in
+    mgsm|msvamp) echo "       Run (login node): python Stage3/load_text_evaluation.py --output_dir $STAGE3/data" ;;
+    *)           echo "       Run: python Stage3/load_evaluation_data.py --benchmark $BENCHMARK --languages $LANG" ;;
+  esac
   exit 1
 fi
 if [ "$BENCHMARK" = "xgqa" ] && [ ! -d "$GQA_IMAGES_DIR" ]; then
@@ -136,13 +147,13 @@ if [ "$BENCHMARK" = "xgqa" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --images-dir $GQA_IMAGES_DIR"
 fi
 if [ -n "$RESULTS_JSONL" ]; then
-  RESULTS_PATH="$STAGE3/results/pooled_$CHECKPOINT_STAGE/$BENCHMARK/$LANG.jsonl"
+  RESULTS_PATH="$STAGE3/results/pooled_$CHECKPOINT_STAGE/$BENCHMARK${MAX_EXAMPLES:+_max$MAX_EXAMPLES}/$LANG.jsonl"
   EXTRA_ARGS="$EXTRA_ARGS --results-jsonl $RESULTS_PATH"
   echo "RESULTS_JSONL=$RESULTS_PATH"
 fi
 
-echo "=== Start pooled $CHECKPOINT_STAGE VQA evaluation: $BENCHMARK/$LANG ==="
 cd "$PROJECT_ROOT"
+echo "=== Start pooled $CHECKPOINT_STAGE evaluation: $BENCHMARK/$LANG ==="
 # shellcheck disable=SC2086
 python -u Stage3/evaluate.py \
   --benchmark    "$BENCHMARK" \

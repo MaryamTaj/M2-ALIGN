@@ -18,7 +18,7 @@
 # change.
 #
 #   Warm mapping = Stage1/outputs/pooled/pytorch_model.bin
-#   Warm LLM     = the Stage 0 MonoVQA checkpoint (frozen phi)
+#   LLM          = vanilla Qwen3-VL-8B-Instruct (frozen; only the mapping layer trains)
 #   Reads  wit_pairs.jsonl + cc3m_pairs.jsonl for each of the 11 languages
 #   Saves  $SCRATCH/M2-ALIGN/Stage2/outputs/pooled/pytorch_model.bin
 #
@@ -42,7 +42,7 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 STAGE1="$DATA_ROOT/Stage1"
 STAGE2="$DATA_ROOT/Stage2"
 
-LLM_PATH="$SCRATCH/M2-ALIGN/Stage0/outputs/qwen3vl-8b-gqa"
+LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 STAGE1_MAPPING_CKPT="$STAGE1/outputs/pooled/pytorch_model.bin"
 OUTPUT_DIR="$STAGE2/outputs/pooled"
@@ -96,8 +96,7 @@ fi
 echo
 
 if [ ! -d "$LLM_PATH" ]; then
-  echo "ERROR: Stage 0 MonoVQA checkpoint not found: $LLM_PATH"
-  echo "       Run: sbatch Stage0/job-scripts/train.sh"
+  echo "ERROR: LLM snapshot path not found: $LLM_PATH"
   exit 1
 fi
 if [ ! -d "$MT_PATH" ]; then

@@ -147,7 +147,7 @@ LANG=om sbatch --job-name=stage2_train_om Stage2/job-scripts/train.sh
 # (ON WORKSTATION ONLY)####################################################
 // Stage 3 train QA
 python Stage3/load_base_data.py --n_samples 30000 --seed 42 \
-  --output Stage3/data/english.jsonl
+  --output Stage3/data/en.jsonl
 ###########################################################################
 LANG=bn sbatch --job-name=stage3b_load_vqa_bn Stage3/job-scripts/load_translated_data.sh
 LANG=ru sbatch --job-name=stage3b_load_vqa_ru Stage3/job-scripts/load_translated_data.sh
@@ -176,7 +176,7 @@ python Stage3/load_evaluation_data.py --benchmark worldcuisines_task2 --language
 // Stage 3 images
 wget -c https://nlp.stanford.edu/data/gqa/images.zip
 // GQA's train images
-jq -r '.vg_image_id' Stage3/data/english.jsonl \
+jq -r '.vg_image_id' Stage3/data/en.jsonl \
   | sort -u > /tmp/needed_train_ids.txt
 // GQA's test images
 jq -r '.vg_image_id' Stage3/data/xgqa/{bn,de,ru,zh,pt,id,ko}.jsonl \

@@ -17,7 +17,7 @@
 # launcher just assembles a pooled/ directory and points --data-dir at it.
 #
 #   Warm mapping = Stage2/outputs/pooled/pytorch_model.bin
-#   Warm LLM     = the Stage 0 MonoVQA checkpoint (frozen phi)
+#   LLM          = vanilla Qwen3-VL-8B-Instruct (frozen; only the mapping layer trains)
 #   Reads  Stage3/data/{bn,ru,de,zh,pt,id,ko,jv,mn,si,ga}.jsonl (30k each)
 #   Saves  $SCRATCH/M2-ALIGN/Stage3/outputs/pooled/pytorch_model.bin
 #
@@ -26,8 +26,10 @@
 # / read_x_csqa_train / read_xnli_train) DOES include English (x-csqa's list
 # ends with 'English'; math.json is 10 langs incl. English -> 30k x 10 = the
 # paper's 300k). The mapping stage does NOT (Stage 1 pooled stays
-# English-free). make_english_aug.py remaps english.jsonl into the
-# query/answer/nllb_lang_tag=eng_Latn schema; pool = 30k x 12.
+# English-free). English rows come from Stage3/data/en.jsonl -- the
+# untranslated GQA sample (also the source load_translated_data.py
+# translates), in the per-language schema (nllb_lang_tag=eng_Latn);
+# pool = 30k x 12.
 # Set INCLUDE_ENGLISH=0 for the no-English ablation.
 #
 # 1 GPU is enough: measured per-language run = 30k x 3 epochs = ~80 min on
@@ -50,7 +52,7 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 STAGE2="$DATA_ROOT/Stage2"
 STAGE3="$DATA_ROOT/Stage3"
 
-LLM_PATH="$SCRATCH/M2-ALIGN/Stage0/outputs/qwen3vl-8b-gqa"
+LLM_PATH="$SCRATCH/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 MT_PATH="$SCRATCH/huggingface/nllb-200-distilled-600M-full"
 GQA_IMAGES_DIR="$STAGE3/data/gqa/images"
 STAGE2_MAPPING_CKPT="$STAGE2/outputs/pooled/pytorch_model.bin"
@@ -107,8 +109,7 @@ fi
 echo
 
 if [ ! -d "$LLM_PATH" ]; then
-  echo "ERROR: Stage 0 MonoVQA checkpoint not found: $LLM_PATH"
-  echo "       Run: sbatch Stage0/job-scripts/train.sh"
+  echo "ERROR: LLM snapshot path not found: $LLM_PATH"
   exit 1
 fi
 if [ ! -d "$MT_PATH" ]; then
@@ -139,14 +140,14 @@ for code in $LANG_CODES; do
 done
 
 if [ "$INCLUDE_ENGLISH" = 1 ]; then
-  ENGLISH_SRC="$STAGE3/data/english.jsonl"
-  ENGLISH_AUG="$STAGE3/data/english_aug.jsonl"
+  # Untranslated English GQA rows, already in the per-language schema
+  # (query/answer/vg_image_id/nllb_lang_tag=eng_Latn).
+  ENGLISH_SRC="$STAGE3/data/en.jsonl"
   if [ ! -f "$ENGLISH_SRC" ]; then
     echo "ERROR: INCLUDE_ENGLISH=1 but missing $ENGLISH_SRC."
     exit 1
   fi
-  python "$PROJECT_ROOT/Stage3/make_english_aug.py" "$ENGLISH_SRC" "$ENGLISH_AUG"
-  ln -sf "$ENGLISH_AUG" "$POOLED_DATA_DIR/english.jsonl"
+  ln -sf "$ENGLISH_SRC" "$POOLED_DATA_DIR/en.jsonl"
   echo "INCLUDE_ENGLISH=1 -- English rows in the pool (MindMerger-faithful)."
 else
   echo "INCLUDE_ENGLISH=0 -- no-English ablation (NOT MindMerger-faithful)."

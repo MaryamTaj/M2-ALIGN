@@ -282,7 +282,7 @@ def main() -> None:
     parser.add_argument("--num_beams", type=int, default=4)
     parser.add_argument(
         "--gqa_jsonl", type=str, default=None,
-        help="Path to a JSONL of {question, answer, vg_image_id} rows produced offline by "
+        help="Path to Stage3/data/en.jsonl ({vg_image_id, query, answer, ...}; legacy {question, ...} also accepted) produced offline by "
              "Stage3/load_base_data.py (run on a login-node-free workstation, then Globus-transferred "
              "here). When given, this script never calls load_dataset() itself -- no network access "
              "needed on Narval for this step at all.",
@@ -302,6 +302,13 @@ def main() -> None:
         logger.info("Loading pre-sampled GQA rows from %s (no network access)", args.gqa_jsonl)
         with open(args.gqa_jsonl, encoding="utf-8") as f:
             gqa_rows = [json.loads(line) for line in f if line.strip()]
+        # Stage3/data/en.jsonl stores the English question as `query`
+        # (per-language schema); older raw samples used `question`.
+        gqa_rows = [
+            {"question": r["query"] if "query" in r else r["question"],
+             "answer": r["answer"], "vg_image_id": r["vg_image_id"]}
+            for r in gqa_rows
+        ]
         logger.info("Loaded %d pre-sampled GQA rows", len(gqa_rows))
     else:
         gqa_rows = sample_gqa(args.n_samples, args.seed, logger)

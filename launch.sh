@@ -3,29 +3,42 @@
 #
 # Topology -- one job per training stage (languages are POOLED, not per-language):
 #
-#   stage0_sft ................ English-GQA SFT of Qwen3-VL  -> the MonoVQA checkpoint
-#     |
-#     |-- monovqa_eval_{xgqa,cvqa}_<L> ... condition 2: MonoVQA zero-shot, per eval lang
-#     |
-#     `-- stage1_pooled ....... mapping, 11 langs pooled (100k/lang x 3 epochs, 4 GPUs)
-#            `-- stage2_pooled . visual grounding, 11 langs pooled (~11k/lang x 3 epochs)
-#                   `-- stage3b_pooled ... VQA augmentation, 11 langs + English (30k x 12, 3 epochs)
-#                          |-- pooled_eval_xgqa_<L> ... condition 3, per eval lang
-#                          `-- pooled_eval_cvqa_<L>
+#   stage1_pooled ....... mapping, 11 langs pooled (100k/lang x 3 epochs, 4 GPUs)
+#      `-- stage2_pooled . visual grounding, 11 langs pooled (~11k/lang x 3 epochs)
+#             `-- stage3b_pooled ... VQA augmentation, 11 langs + English (30k x 12, 3 epochs)
+#                    `-- pooled_eval_<BM>_<L> ... per EVAL_BENCHMARKS x eval lang
+#
+#   baseline_eval_<BM>_<L> ...... (BASELINE_EVAL=1) vanilla Qwen3-VL, no dependency
+#   baseline_tt_eval_<BM>_<L> ... (BASELINE_EVAL=1, TRANSLATE_TEST=1) vanilla Qwen3-VL on
+#                                 NLLB-translated English questions (xgqa/cvqa* only)
+#
+# Benchmarks (EVAL_BENCHMARKS, shared by pooled + baseline evals):
+#   xgqa, cvqa (open-ended, choice log-likelihood), cvqa_mcq (closed-ended),
+#   cvqa_generation, mgsm, msvamp. mgsm/msvamp are text-only and go through
+#   the same eval job scripts (no image passed), fanned out over TEXT_LANGS.
+#
+# Qwen3-VL-8B-Instruct and NLLB stay frozen in every stage; only the mapping
+# layer is trained.
 #
 # Every arrow is `--dependency=afterok` (downstream starts only if upstream
-# exits 0). The two eval fans run in parallel once their parent finishes.
+# exits 0). The eval fan runs in parallel once Stage 3b finishes.
 #
 # The 11 trained languages are fixed inside the *_pooled.sh scripts
 # (bn ru de zh pt id ko jv mn si ga). This launcher only chooses which eval
 # languages to fan out to and wires the dependencies.
 #
 # Usage:
-#   ./launch.sh                     # LoRA Stage 0, submit everything
+#   ./launch.sh                     # train chain + pooled evals + baseline + translate-test
+#   BASELINE_EVAL=0 ./launch.sh     # re-launch an arm without re-running the (unchanged) baselines
+#   SKIP_TRAIN=1 ./launch.sh        # baseline + translate-test only
 #   DRY_RUN=1 ./launch.sh           # print sbatch commands, submit nothing
-#   MODE=full ./launch.sh           # full-weight Stage 0 SFT (4 GPUs, ZeRO-3)
 #   XGQA_LANGS="bn de" CVQA_LANGS="bn jv" ./launch.sh
-#   SKIP_MONOVQA_EVAL=1 ./launch.sh # skip condition-2 eval fan only
+#   EVAL_BENCHMARKS=cvqa_mcq BASELINE_EVAL=1 ARM=arm1 ./launch.sh
+#       # train chain + closed-ended CVQA eval, plus native-res Baseline cvqa_mcq
+#   SKIP_TRAIN=1 BASELINE_EVAL=1 BASELINE_VISUAL_PIXELS=65536 EVAL_BENCHMARKS=cvqa_mcq ARM=arm2 ./launch.sh
+#       # Baseline only, at Stage3's 256*256 pixel budget
+#   STAGE3_JOB=3188207 EVAL_BENCHMARKS=xgqa ARM=arm1 ./launch.sh
+#       # pooled eval only, afterok on an already-queued Stage 3b job (no retraining)
 #
 # Nothing here needs internet; it only calls sbatch. Data/checkpoints are
 # assumed to already be on $SCRATCH (see README for download/transfer).
@@ -40,13 +53,17 @@ DATA_ROOT="$SCRATCH/M2-ALIGN"
 # ---------------------------------------------------------------------------
 # Config (all env-overridable)
 # ---------------------------------------------------------------------------
-MODE="${MODE:-lora}"                # Stage 0: lora (1 GPU) | full (4 GPUs, ZeRO-3)
-EPOCHS_S0="${EPOCHS_S0:-3}"         # Stage 0 epochs (MetaMath was 3)
 DRY_RUN="${DRY_RUN:-0}"
 COLLECT="${COLLECT:-1}"             # 1 = append a final job that scrapes eval accuracies
-SKIP_MONOVQA_EVAL="${SKIP_MONOVQA_EVAL:-0}"
 INCLUDE_ENGLISH="${INCLUDE_ENGLISH:-1}"   # 1 = English GQA rows in the Stage 3b pool (MindMerger-faithful); 0 = ablation
 ACCOUNT="${ACCOUNT:-def-annielee}"
+ARM="${ARM:-}"                      # optional label, prefixed to the run dir + job names
+EVAL_BENCHMARKS="${EVAL_BENCHMARKS:-xgqa cvqa cvqa_mcq mgsm msvamp}"   # any of: xgqa cvqa cvqa_generation cvqa_mcq mgsm msvamp
+SKIP_TRAIN="${SKIP_TRAIN:-0}"       # 1 = no Stage 1/2/3b chain and no pooled eval
+STAGE3_JOB="${STAGE3_JOB:-}"        # existing stage3b_pooled job id: submit no training, hang pooled eval off it
+BASELINE_EVAL="${BASELINE_EVAL:-1}" # 1 = also submit vanilla Qwen3-VL evals (Baseline/job-scripts/evaluate.sh)
+TRANSLATE_TEST="${TRANSLATE_TEST:-1}" # 1 = also baseline translate-test on xgqa/cvqa* (needs BASELINE_EVAL=1)
+BASELINE_VISUAL_PIXELS="${BASELINE_VISUAL_PIXELS:-}"  # empty = native resolution; 65536 = Stage3's budget
 
 # The 11 pooled training languages -- must match LANG_CODES/LANG_NAMES inside
 # the *_pooled.sh scripts. Used here only for the data preflight.
@@ -59,39 +76,61 @@ declare -A LANG_NAME=(
 # Eval fan-out (subset of the trained langs that have eval data for each set).
 XGQA_LANGS="${XGQA_LANGS:-bn de id ko pt ru zh}"
 CVQA_LANGS="${CVQA_LANGS:-bn ga id jv ko mn pt ru si zh}"
+TEXT_LANGS="${TEXT_LANGS:-bn de ru zh en}"   # mgsm/msvamp: trained langs they cover + English
 
-S0="Stage0/job-scripts/train.sh"
-S0_EV="Stage0/job-scripts/evaluate.sh"
 S1="Stage1/job-scripts/train_pooled.sh"
 S2="Stage2/job-scripts/train_pooled.sh"
 S3="Stage3/job-scripts/train_pooled.sh"
 EV="Stage3/job-scripts/evaluate_pooled.sh"
+BEV="Baseline/job-scripts/evaluate.sh"
 
-RUN_TAG="$(date +%Y%m%d_%H%M%S)"
+# Eval languages for a benchmark (cvqa variants share the CVQA eval files).
+langs_for() {
+  case "$1" in
+    xgqa) echo "$XGQA_LANGS" ;;
+    cvqa|cvqa_generation|cvqa_mcq) echo "$CVQA_LANGS" ;;
+    mgsm|msvamp) echo "$TEXT_LANGS" ;;
+    *) echo "ERROR: unsupported benchmark in EVAL_BENCHMARKS: $1" >&2; exit 1 ;;
+  esac
+}
+data_dir_for() { case "$1" in cvqa*) echo cvqa ;; *) echo "$1" ;; esac; }
+is_vqa() { case "$1" in mgsm|msvamp) return 1 ;; *) return 0 ;; esac; }
+
+for BM in $EVAL_BENCHMARKS; do langs_for "$BM" >/dev/null || exit 1; done
+
+RUN_TAG="${ARM:+${ARM}_}$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$DATA_ROOT/pipeline_runs/pooled_$RUN_TAG"
 
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------
 command -v sbatch >/dev/null || { echo "ERROR: sbatch not on PATH"; exit 1; }
-for f in "$S0" "$S0_EV" "$S1" "$S2" "$S3" "$EV"; do
+for f in "$S1" "$S2" "$S3" "$EV" "$BEV"; do
   [ -f "$f" ] || { echo "ERROR: missing job script: $f"; exit 1; }
 done
-case "$MODE" in lora|full) ;; *) echo "ERROR: MODE must be lora|full"; exit 1 ;; esac
 
 missing=0
 warn() { echo "  MISSING: $1"; missing=1; }
 if [ "$DRY_RUN" != 1 ]; then
   echo "== Data preflight =="
-  [ -f "$DATA_ROOT/Stage3/data/english.jsonl" ] || warn "Stage3/data/english.jsonl (Stage 0 + English aug)"
-  [ -d "$DATA_ROOT/Stage3/data/gqa/images" ]     || warn "Stage3/data/gqa/images/"
-  for c in $POOLED_CODES; do
-    [ -f "$DATA_ROOT/Stage1/data/${LANG_NAME[$c]}_to_English.jsonl" ] || warn "Stage1/data/${LANG_NAME[$c]}_to_English.jsonl"
-    [ -f "$DATA_ROOT/Stage2/data/$c/wit_pairs.jsonl" ]                || warn "Stage2/data/$c/wit_pairs.jsonl"
-    [ -f "$DATA_ROOT/Stage3/data/$c.jsonl" ]                          || warn "Stage3/data/$c.jsonl"
+  if [ "$SKIP_TRAIN" != 1 ] && [ -z "$STAGE3_JOB" ]; then
+    [ "$INCLUDE_ENGLISH" != 1 ] || [ -f "$DATA_ROOT/Stage3/data/en.jsonl" ] || warn "Stage3/data/en.jsonl (English rows in Stage 3b pool)"
+    [ -d "$DATA_ROOT/Stage3/data/gqa/images" ]     || warn "Stage3/data/gqa/images/"
+    for c in $POOLED_CODES; do
+      [ -f "$DATA_ROOT/Stage1/data/${LANG_NAME[$c]}_to_English.jsonl" ] || warn "Stage1/data/${LANG_NAME[$c]}_to_English.jsonl"
+      [ -f "$DATA_ROOT/Stage2/data/$c/wit_pairs.jsonl" ]                || warn "Stage2/data/$c/wit_pairs.jsonl"
+      [ -f "$DATA_ROOT/Stage3/data/$c.jsonl" ]                          || warn "Stage3/data/$c.jsonl"
+    done
+  fi
+  for BM in $EVAL_BENCHMARKS; do
+    for L in $(langs_for "$BM"); do
+      d="$(data_dir_for "$BM")"
+      [ -f "$DATA_ROOT/Stage3/data/$d/$L.jsonl" ] || warn "Stage3/data/$d/$L.jsonl"
+      if [ "$BASELINE_EVAL" = 1 ] && [ "$TRANSLATE_TEST" = 1 ] && is_vqa "$BM"; then
+        [ -f "$DATA_ROOT/Baseline/data/translate_test/$d/$L.jsonl" ] || warn "Baseline/data/translate_test/$d/$L.jsonl"
+      fi
+    done
   done
-  for L in $XGQA_LANGS; do [ -f "$DATA_ROOT/Stage3/data/xgqa/$L.jsonl" ] || warn "Stage3/data/xgqa/$L.jsonl"; done
-  for L in $CVQA_LANGS; do [ -f "$DATA_ROOT/Stage3/data/cvqa/$L.jsonl" ] || warn "Stage3/data/cvqa/$L.jsonl"; done
   if [ "$missing" = 1 ]; then
     echo "ERROR: inputs above are missing -- the pooled chain would fail. Fix or use DRY_RUN=1." >&2
     exit 1
@@ -100,7 +139,7 @@ if [ "$DRY_RUN" != 1 ]; then
   echo
 fi
 
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR" "$DATA_ROOT/Baseline/logs"
 JOBS_TSV="$RUN_DIR/jobs.tsv"
 EVAL_TSV="$RUN_DIR/eval_jobs.tsv"     # phase<TAB>benchmark<TAB>lang<TAB>jobid<TAB>logdir
 printf 'phase\tjob\tjobid\n' > "$JOBS_TSV"
@@ -108,9 +147,12 @@ printf 'phase\tjob\tjobid\n' > "$JOBS_TSV"
 
 echo "run tag   : pooled_$RUN_TAG"
 echo "run dir   : $RUN_DIR"
-echo "Stage 0   : MODE=$MODE, EPOCHS=$EPOCHS_S0"
-echo "xgqa eval : $XGQA_LANGS"
-echo "cvqa eval : $CVQA_LANGS"
+echo "benchmarks: $EVAL_BENCHMARKS"
+echo "xgqa langs: $XGQA_LANGS"
+echo "cvqa langs: $CVQA_LANGS"
+echo "train     : $(if [ "$SKIP_TRAIN" = 1 ]; then echo skipped; elif [ -n "$STAGE3_JOB" ]; then echo "reuse stage3b job $STAGE3_JOB"; else echo 'stage1 -> stage2 -> stage3b'; fi)"
+echo "text langs: $TEXT_LANGS"
+echo "baseline  : $([ "$BASELINE_EVAL" = 1 ] && echo "on (visual_pixels=${BASELINE_VISUAL_PIXELS:-native}, translate-test=$TRANSLATE_TEST)" || echo off)"
 echo "dry run   : $DRY_RUN"
 echo
 
@@ -132,71 +174,80 @@ submit() {
   echo "${out%%;*}"
 }
 
-# ---------------------------------------------------------------------------
-# Phase 0: Stage 0 SFT -> MonoVQA checkpoint
-# ---------------------------------------------------------------------------
-echo "== Stage 0 (MonoVQA SFT) =="
-S0_OPTS=()
-if [ "$MODE" = full ]; then
-  S0_OPTS=(--gres=gpu:4 --cpus-per-task=48 --mem=490G --time=20:00:00)
-fi
-S0_ID="$(submit "stage0_sft" "" "$S0" "MODE=$MODE,EPOCHS=$EPOCHS_S0" "${S0_OPTS[@]}")"
-printf 'stage0\tstage0_sft\t%s\n' "$S0_ID" >> "$JOBS_TSV"
-echo "  stage0_sft -> $S0_ID"
-echo
-
-# ---------------------------------------------------------------------------
-# Phase 1: MonoVQA (condition 2) eval fan -- depends only on Stage 0
-# ---------------------------------------------------------------------------
 ALL_EVAL=()
-if [ "$SKIP_MONOVQA_EVAL" != 1 ]; then
-  echo "== MonoVQA eval (condition 2, zero-shot) =="
-  for BM in xgqa cvqa; do
-    eval "cov=\$${BM^^}_LANGS"
-    for L in $cov; do
-      id="$(submit "monovqa_eval_${BM}_$L" "$S0_ID" "$S0_EV" "BENCHMARK=$BM,LANG=$L")"
-      ALL_EVAL+=("$id")
-      printf 'monovqa\t%s\t%s\t%s\t%s\n' "$BM" "$L" "$id" "$DATA_ROOT/Stage0/logs" >> "$EVAL_TSV"
-      echo "  $BM/$L -> $id"
-    done
-  done
-  echo
-fi
 
+if [ "$SKIP_TRAIN" != 1 ]; then
+if [ -n "$STAGE3_JOB" ]; then
+  S3_ID="$STAGE3_JOB"
+  printf 'stage3b\treused\t%s\n' "$S3_ID" >> "$JOBS_TSV"
+  echo "== Reusing Stage 3b job $S3_ID (no training submitted) =="
+  echo
+else
 # ---------------------------------------------------------------------------
-# Phase 2-4: pooled Stage 1 -> Stage 2 -> Stage 3b (linear chain off Stage 0)
+# Phase 1-3: pooled Stage 1 -> Stage 2 -> Stage 3b (linear chain)
 # ---------------------------------------------------------------------------
 echo "== Pooled training chain =="
-S1_ID="$(submit "stage1_pooled" "$S0_ID" "$S1" "")"
+S1_ID="$(submit "${ARM:+${ARM}_}stage1_pooled" "" "$S1" "")"
 printf 'stage1\tstage1_pooled\t%s\n' "$S1_ID" >> "$JOBS_TSV"
-echo "  stage1_pooled -> $S1_ID   (after $S0_ID)"
+echo "  stage1_pooled -> $S1_ID"
 
-S2_ID="$(submit "stage2_pooled" "$S1_ID" "$S2" "")"
+S2_ID="$(submit "${ARM:+${ARM}_}stage2_pooled" "$S1_ID" "$S2" "")"
 printf 'stage2\tstage2_pooled\t%s\n' "$S2_ID" >> "$JOBS_TSV"
 echo "  stage2_pooled -> $S2_ID   (after $S1_ID)"
 
-S3_ID="$(submit "stage3b_pooled" "$S2_ID" "$S3" "INCLUDE_ENGLISH=$INCLUDE_ENGLISH")"
+S3_ID="$(submit "${ARM:+${ARM}_}stage3b_pooled" "$S2_ID" "$S3" "INCLUDE_ENGLISH=$INCLUDE_ENGLISH")"
 printf 'stage3b\tstage3b_pooled\t%s\n' "$S3_ID" >> "$JOBS_TSV"
 echo "  stage3b_pooled -> $S3_ID   (after $S2_ID)"
 echo
+fi
 
 # ---------------------------------------------------------------------------
-# Phase 5: pooled Stage 3b eval fan (condition 3) -- depends on Stage 3b
+# Phase 4: pooled Stage 3b eval fan -- depends on Stage 3b
 # ---------------------------------------------------------------------------
-echo "== Pooled eval (condition 3) =="
-for BM in xgqa cvqa; do
-  eval "cov=\$${BM^^}_LANGS"
-  for L in $cov; do
-    id="$(submit "pooled_eval_${BM}_$L" "$S3_ID" "$EV" "BENCHMARK=$BM,LANG=$L,CHECKPOINT_STAGE=stage3b")"
+echo "== Pooled eval =="
+for BM in $EVAL_BENCHMARKS; do
+  for L in $(langs_for "$BM"); do
+    id="$(submit "${ARM:+${ARM}_}pooled_eval_${BM}_$L" "$S3_ID" "$EV" "BENCHMARK=$BM,LANG=$L,CHECKPOINT_STAGE=stage3b")"
     ALL_EVAL+=("$id")
     printf 'pooled\t%s\t%s\t%s\t%s\n' "$BM" "$L" "$id" "$DATA_ROOT/Stage3/logs" >> "$EVAL_TSV"
     echo "  $BM/$L -> $id   (after $S3_ID)"
   done
 done
 echo
+fi
 
 # ---------------------------------------------------------------------------
-# Phase 6 (optional): scrape all eval accuracies into one table
+# Baseline eval fan (optional): vanilla Qwen3-VL, no mapping, no dependency
+# ---------------------------------------------------------------------------
+if [ "$BASELINE_EVAL" = 1 ]; then
+  echo "== Baseline eval (visual_pixels=${BASELINE_VISUAL_PIXELS:-native}) =="
+  px_tag="${BASELINE_VISUAL_PIXELS:+_px$BASELINE_VISUAL_PIXELS}"
+  for BM in $EVAL_BENCHMARKS; do
+    for L in $(langs_for "$BM"); do
+      if is_vqa "$BM"; then
+        id="$(submit "${ARM:+${ARM}_}baseline_eval_${BM}_$L$px_tag" "" "$BEV" \
+                     "BENCHMARK=$BM,LANG=$L,VISUAL_PIXELS=$BASELINE_VISUAL_PIXELS")"
+        printf 'baseline%s\t%s\t%s\t%s\t%s\n' "$px_tag" "$BM" "$L" "$id" "$DATA_ROOT/Baseline/logs" >> "$EVAL_TSV"
+      else
+        id="$(submit "${ARM:+${ARM}_}baseline_eval_${BM}_$L" "" "$BEV" "BENCHMARK=$BM,LANG=$L")"
+        printf 'baseline\t%s\t%s\t%s\t%s\n' "$BM" "$L" "$id" "$DATA_ROOT/Baseline/logs" >> "$EVAL_TSV"
+      fi
+      ALL_EVAL+=("$id")
+      echo "  $BM/$L -> $id"
+      if [ "$TRANSLATE_TEST" = 1 ] && is_vqa "$BM"; then
+        id="$(submit "${ARM:+${ARM}_}baseline_tt_eval_${BM}_$L$px_tag" "" "$BEV" \
+                     "BENCHMARK=$BM,LANG=$L,TRANSLATE_TEST=1,VISUAL_PIXELS=$BASELINE_VISUAL_PIXELS")"
+        ALL_EVAL+=("$id")
+        printf 'baseline_tt%s\t%s\t%s\t%s\t%s\n' "$px_tag" "$BM" "$L" "$id" "$DATA_ROOT/Baseline/logs" >> "$EVAL_TSV"
+        echo "  $BM/$L (translate-test) -> $id"
+      fi
+    done
+  done
+  echo
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 5 (optional): scrape all eval accuracies into one table
 # ---------------------------------------------------------------------------
 if [ "$COLLECT" = 1 ] && [ "${#ALL_EVAL[@]}" -gt 0 ]; then
   COLLECT_SH="$RUN_DIR/collect.sh"
@@ -215,13 +266,13 @@ while IFS=\$'\t' read -r phase bm lang jid logdir; do
   [ -n "\$jid" ] || continue
   f="\$(ls -t "\$logdir"/*_"\$jid".log 2>/dev/null | head -1 || true)"
   if [ -z "\$f" ]; then printf '%s\t%s\t%s\t%s\t\t%s\n' "\$phase" "\$bm" "\$lang" NO_LOG "\$jid" >> "\$OUT"; continue; fi
-  line="\$(grep -oE 'accuracy=[0-9.]+% \(n=[0-9]+\)' "\$f" | tail -1 || true)"
+  line="\$(grep -oE 'accuracy=[0-9.]+%( \(n=[0-9]+\))?' "\$f" | tail -1 || true)"
   acc="\$(printf '%s' "\$line" | grep -oE '[0-9.]+' | head -1 || true)"
   n="\$(printf '%s' "\$line" | grep -oE 'n=[0-9]+' | grep -oE '[0-9]+' || true)"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "\$phase" "\$bm" "\$lang" "\${acc:-MISSING}" "\${n:-}" "\$jid" >> "\$OUT"
 done < "$EVAL_TSV"
 sort -k1,1 -k2,2 -k3,3 -o "\$OUT" "\$OUT"
-echo "=== pooled_$RUN_TAG eval results (monovqa = condition 2, pooled = condition 3) ==="
+echo "=== pooled_$RUN_TAG eval results ==="
 column -t -s\$'\t' "\$OUT"
 EOF
   chmod +x "$COLLECT_SH"
