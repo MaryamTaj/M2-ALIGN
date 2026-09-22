@@ -37,6 +37,9 @@ import argparse
 import json
 import os
 import random
+import re
+import statistics
+from collections import Counter
 
 import torch
 from tqdm import tqdm
@@ -63,6 +66,43 @@ def write_jsonl(path: str, rows: list[dict]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     os.replace(tmp, path)
     print(f"Wrote {len(rows)} rows -> {path}")
+
+
+# NLLB (greedy, no repetition penalty) sometimes loops: "kick kick kick ...",
+# or the same sentence 3+ times. Such rows are gibberish to train on, and a
+# 2k-token question OOMed pooled Stage 3b replay (job 3613937) because the
+# math prompt T is not truncated. Checked: flags 0 of 5000 math_en rows.
+_RUN = re.compile(r"(\S.{0,29}?)(?:\s*\1){7,}", re.S)   # a unit repeated 8+ times in a row
+_SENT = re.compile(r"[^.\u3002?\uff1f!\uff01]+")          # split on . 。 ? ？ ! ！
+
+
+def degenerate_reason(text: str, len_ratio: float, median_ratio: float) -> str | None:
+    """Why a translated question looks like an NLLB repetition loop, or None.
+
+    *len_ratio* is len(text) / len(English source) in characters and
+    *median_ratio* its median over the language, so "len" means 2.5x longer
+    than this language's translations usually are.
+    """
+    for m in _RUN.finditer(text):
+        if not m.group(1).strip().replace(",", "").replace(".", "").isdigit():  # keep 1,000,000,000
+            return "run"
+    sents = Counter(x.strip() for x in _SENT.findall(text) if len(x.strip()) >= 10)
+    if sents and sents.most_common(1)[0][1] >= 3:
+        return "sentence"
+    if len_ratio > 2.5 * median_ratio:
+        return "length"
+    return None
+
+
+def drop_degenerate(rows: list[dict], english: list[str], code: str) -> list[dict]:
+    """Filter translated math rows; *english* is the parallel source question per row."""
+    ratios = [len(r["query"]) / max(1, len(q)) for r, q in zip(rows, english)]
+    median = statistics.median(ratios)
+    reasons = [degenerate_reason(r["query"], x, median) for r, x in zip(rows, ratios)]
+    kept = [r for r, why in zip(rows, reasons) if why is None]
+    print(f"math_{code}: dropped {len(rows) - len(kept)}/{len(rows)} degenerate translations "
+          f"{dict(Counter(w for w in reasons if w))}")
+    return kept
 
 
 def load_metamath(types: tuple[str, ...], n: int, seed: int) -> list[dict]:
@@ -111,6 +151,9 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--max-src-len", type=int, default=512)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--refilter", action="store_true",
+                        help="Only re-apply the degenerate-translation filter to existing math_{code}.jsonl "
+                             "(originals kept in <output-dir>/unfiltered/). Needs math_en.jsonl. No GPU.")
     parser.add_argument("--local-files-only", action="store_true")
     args = parser.parse_args()
 
@@ -119,6 +162,20 @@ def main() -> None:
     if unknown:
         raise ValueError(f"No Stage 1 language name for: {unknown}")
     os.makedirs(args.output_dir, exist_ok=True)
+
+    if args.refilter:
+        english = [r["query"] for r in read_jsonl(os.path.join(args.output_dir, "math_en.jsonl"))]
+        os.makedirs(os.path.join(args.output_dir, "unfiltered"), exist_ok=True)
+        for code in codes:
+            path = os.path.join(args.output_dir, f"math_{code}.jsonl")
+            backup = os.path.join(args.output_dir, "unfiltered", f"math_{code}.jsonl")
+            if not os.path.isfile(backup):
+                os.replace(path, backup)
+            rows = read_jsonl(backup)
+            if len(rows) != len(english):
+                raise ValueError(f"{backup} has {len(rows)} rows, math_en has {len(english)}: not parallel")
+            write_jsonl(path, drop_degenerate(rows, english, code))
+        return
 
     def todo(path: str) -> bool:
         if os.path.isfile(path) and not args.overwrite:
@@ -174,10 +231,11 @@ def main() -> None:
     for code in pending:
         tag = NLLB_CODES[code]
         translated = translate(questions, tag, model, tokenizer, device, args.batch_size, args.max_src_len)
-        write_jsonl(math_outs[code], [
+        rows = [
             {"query": q, "target": p["answer"], "nllb_lang_tag": tag, "task": "math"}
             for p, q in zip(problems, translated)
-        ])
+        ]
+        write_jsonl(math_outs[code], drop_degenerate(rows, questions, code))
 
 
 if __name__ == "__main__":

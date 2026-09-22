@@ -79,7 +79,7 @@ case "$BENCHMARK" in
   *)                   EVAL_DATA="$DATA_ROOT/Stage3/data/$BENCHMARK/$LANG.jsonl" ;;
 esac
 TT_TAG=""
-if [ -n "$TRANSLATE_TEST" ]; then
+if [ "${TRANSLATE_TEST:-0}" = 1 ]; then
   case "$BENCHMARK" in
     xgqa)   EVAL_DATA="$DATA_ROOT/Baseline/data/translate_test/xgqa/$LANG.jsonl" ;;
     cvqa*)  EVAL_DATA="$DATA_ROOT/Baseline/data/translate_test/cvqa/$LANG.jsonl" ;;
@@ -87,8 +87,8 @@ if [ -n "$TRANSLATE_TEST" ]; then
   esac
   TT_TAG="_tt"
 fi
-if [ -n "$UPPER_BOUND" ]; then
-  if [ -n "$TRANSLATE_TEST" ]; then
+if [ "${UPPER_BOUND:-0}" = 1 ]; then
+  if [ "${TRANSLATE_TEST:-0}" = 1 ]; then
     echo "ERROR: TRANSLATE_TEST and UPPER_BOUND are mutually exclusive"; exit 1
   fi
   case "$BENCHMARK" in
@@ -137,7 +137,7 @@ if [ ! -d "$LLM_PATH" ]; then
 fi
 if [ ! -f "$EVAL_DATA" ]; then
   echo "ERROR: Eval data not found: $EVAL_DATA"
-  if [ -n "$TRANSLATE_TEST" ]; then
+  if [ "${TRANSLATE_TEST:-0}" = 1 ]; then
     echo "       Run: sbatch --export=LANG=$LANG Baseline/job-scripts/load_translated_data.sh"
   else
     case "$BENCHMARK" in
@@ -174,7 +174,7 @@ fi
 if [ -n "$VISUAL_PIXELS" ]; then
   EXTRA_ARGS="$EXTRA_ARGS --visual-pixels $VISUAL_PIXELS"
 fi
-if [ -n "$UPPER_BOUND" ]; then
+if [ "${UPPER_BOUND:-0}" = 1 ]; then
   EXTRA_ARGS="$EXTRA_ARGS --query-field translated_query"
 fi
 if [ -n "$RESULTS_JSONL" ]; then

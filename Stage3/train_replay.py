@@ -217,7 +217,10 @@ def build_replay_inputs(
     Math rows get ``T`` = the exact chat template Stage3/evaluate.py (mgsm)
     renders for MGSM/MSVAMP (same system message, same prompt, question in
     the row's language). Translation rows get an empty ``T``, matching
-    Stage 1 (``--augmentation False``). ``T`` is not truncated, as at eval.
+    Stage 1 (``--augmentation False``). The question inside ``T`` is cut to
+    ``--replay-max-query-len`` Qwen tokens: eval does not truncate, but an
+    NLLB repetition loop (2k+ tokens) OOMed job 3613937. Filtered replay
+    questions stay under ~900 tokens, so the cap only guards outliers.
     """
     input_ids_mt, mask_mt = mt_input_features(
         [r["query"] for r in rows], [r["nllb_lang_tag"] for r in rows],
@@ -227,9 +230,13 @@ def build_replay_inputs(
     t_ids = []
     for r in rows:
         if r["task"] == "math":
+            question = r["query"]
+            q_ids = tokenizer_llm(question, add_special_tokens=False)["input_ids"]
+            if len(q_ids) > args.replay_max_query_len:
+                question = tokenizer_llm.decode(q_ids[:args.replay_max_query_len])
             messages = [
                 {"role": "system", "content": _MATH_SYSTEM},
-                {"role": "user", "content": build_math_prompt(r["query"])},
+                {"role": "user", "content": build_math_prompt(question)},
             ]
             enc = tokenizer_llm.apply_chat_template(
                 messages, tokenize=True, add_generation_prompt=True, return_dict=True, return_tensors="pt",
@@ -500,6 +507,15 @@ def main(args, logger: logging.Logger) -> None:
         model.mapping.load_state_dict(ckpt["model_state_dict"], strict=False)
         logger.info("Initialised mapping from: %s", args.init_mapping_ckpt)
 
+    if args.gradient_checkpointing:
+        # The LLM is frozen but gradients still flow through it to the mapping,
+        # so every layer's activations are kept for backward. 512-token replay
+        # labels overflow a 40 GB A100 without this. Non-reentrant: the frozen
+        # layers' inputs (mapped embeddings) are the only grad-carrying tensors.
+        model.model_llm.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.model_llm.config.use_cache = False
+        logger.info("Gradient checkpointing enabled on the LLM.")
+
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr)
 
     _collate = partial(
@@ -538,6 +554,28 @@ def main(args, logger: logging.Logger) -> None:
     replay_iter = replay_batches()
     logger.info("Replay: %d rows, one batch of %d every %d VQA batches",
                 len(replay_dataset), replay_bs, args.replay_every)
+
+    # Memory preflight: forward+backward the replay batch made of the longest
+    # rows, so an OOM shows up in the first minute (and in the smoke test)
+    # instead of hours in, when the shuffle happens to draw them together.
+    lens = [len(q) + min(len(t), args.replay_max_gen_len) for q, t in zip(
+        tokenizer_llm([replay_dataset[i]["query"] for i in range(len(replay_dataset))],
+                      add_special_tokens=False)["input_ids"],
+        tokenizer_llm([replay_dataset[i]["target"] for i in range(len(replay_dataset))],
+                      add_special_tokens=False)["input_ids"],
+    )]
+    worst = sorted(range(len(lens)), key=lens.__getitem__, reverse=True)[:replay_bs]
+    logger.info("Replay preflight: longest rows (question+label tokens) %s", [lens[i] for i in worst])
+    model.train()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    model(**build_replay_inputs(
+        [replay_dataset[i] for i in worst], tokenizer_mt, tokenizer_llm, args, device,
+    )).backward()
+    optimizer.zero_grad(set_to_none=True)
+    if torch.cuda.is_available():
+        logger.info("Replay preflight OK: peak %.1f GiB allocated", torch.cuda.max_memory_allocated() / 2**30)
+        torch.cuda.reset_peak_memory_stats()
 
     use_wandb = _init_wandb_or_disable(args, {
         "stage": "stage3b_vqa_augmentation_replay",
@@ -609,6 +647,10 @@ def main(args, logger: logging.Logger) -> None:
                            "train/global_step": global_step})
             if args.max_train_steps and global_step >= args.max_train_steps:
                 logger.info("Reached --max-train-steps=%d (smoke test); stopping epoch.", args.max_train_steps)
+                if torch.cuda.is_available():
+                    logger.info("Peak GPU memory: %.1f GiB allocated, %.1f GiB reserved",
+                                torch.cuda.max_memory_allocated() / 2**30,
+                                torch.cuda.max_memory_reserved() / 2**30)
                 break
 
         # Validation
@@ -696,6 +738,10 @@ if __name__ == "__main__":
                         help="One replay batch per N VQA batches (Santiago's default).")
     parser.add_argument("--replay-batch-size", type=int, default=0,
                         help="0 = same as --train-batch-size.")
+    parser.add_argument("--gradient-checkpointing", action="store_true",
+                        help="Checkpoint the frozen LLM's activations (needed for replay on A100-40GB).")
+    parser.add_argument("--replay-max-query-len", type=int, default=1024,
+                        help="Cap (Qwen tokens) on the math question inside T; guards NLLB repetition loops.")
     parser.add_argument("--replay-max-gen-len", type=int, default=512,
                         help="Label budget for replay targets (CoT solutions are long).")
     parser.add_argument("--max-train-steps", type=int, default=0,

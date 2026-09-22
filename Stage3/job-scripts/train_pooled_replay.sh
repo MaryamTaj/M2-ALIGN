@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=2-00:00:00
+#SBATCH --time=3-00:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=maryam.taj@mail.utoronto.ca
@@ -67,6 +67,10 @@ LANG_CODES="bn ru de zh pt id ko jv mn si ga"
 EPOCHS="${EPOCHS:-3}"
 INCLUDE_ENGLISH="${INCLUDE_ENGLISH:-1}"
 REPLAY_EVERY="${REPLAY_EVERY:-3}"
+# Replay only in languages MGSM/MSVAMP can measure: the overlap of their
+# languages with our Stage 1-3 languages. The other 7 have no text-reasoning
+# eval, so replay there would cost VQA steps without a readout.
+REPLAY_LANGS="${REPLAY_LANGS:-bn de ru zh}"
 SMOKE="${SMOKE:-0}"
 
 PROJECT_ROOT="$HOME/projects/def-annielee/tajm/M2-ALIGN"
@@ -185,7 +189,7 @@ fi
 
 # Replay files: translation + math per language, plus English math if on.
 REPLAY_FILES=()
-for code in $LANG_CODES; do
+for code in $REPLAY_LANGS; do
   REPLAY_FILES+=("$REPLAY_DIR/translation_$code.jsonl" "$REPLAY_DIR/math_$code.jsonl")
 done
 [ "$INCLUDE_ENGLISH" = 1 ] && REPLAY_FILES+=("$REPLAY_DIR/math_en.jsonl")
@@ -205,6 +209,7 @@ echo
 
 echo "=== Start pooled Stage 3b VQA training + text replay (SMOKE=$SMOKE) ==="
 cd "$PROJECT_ROOT"
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 python -u Stage3/train_replay.py \
   --data-dir    "$POOLED_DATA_DIR" \
   --images-dir  "$GQA_IMAGES_DIR" \
@@ -223,6 +228,8 @@ python -u Stage3/train_replay.py \
   --replay-data "$REPLAY_DATA" \
   --replay-every "$REPLAY_EVERY" \
   --replay-max-gen-len 512 \
+  --replay-max-query-len 1024 \
+  --gradient-checkpointing \
   --max-train-steps "$MAX_TRAIN_STEPS" \
   --use-wandb \
   --wandb-mode    offline \
