@@ -7,15 +7,12 @@ the backbone's embedding space. Every encoder is frozen.
 from __future__ import annotations
 
 import os
-
 import torch
 from torch import nn
 from transformers import AutoTokenizer, M2M100Model, MT5EncoderModel, NllbTokenizer
 
 HF_HOME = os.path.join(os.environ.get("SCRATCH", "."), "huggingface")
 
-# --encoder name -> (family, model path). The 600M hub cache is split across
-# two snapshots, so that model loads from a full local copy instead.
 ENCODERS = {
     "nllb-600m": ("nllb", os.path.join(HF_HOME, "nllb-200-distilled-600M-full")),
     "nllb-3.3b": ("nllb", "facebook/nllb-200-3.3B"),
@@ -34,12 +31,12 @@ NLLB_TAGS = {
     "id": "ind_Latn",
     "ko": "kor_Hang",
     "jv": "jav_Latn",
-    "mn": "khk_Cyrl",  # NLLB-200 only ships Halh Mongolian
+    "mn": "khk_Cyrl",  
     "si": "sin_Sinh",
     "ga": "gle_Latn",
     "am": "amh_Ethi",
     "ig": "ibo_Latn",
-    "om": "gaz_Latn",  # NLLB-200 only ships West Central Oromo
+    "om": "gaz_Latn",  
     "es": "spa_Latn",
     "fr": "fra_Latn",
     "ja": "jpn_Jpan",
