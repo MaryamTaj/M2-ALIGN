@@ -19,7 +19,21 @@ from torch import nn
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
 HF_CACHE = os.path.join(os.environ.get("SCRATCH", "."), "huggingface", "hub")
-VISUAL_PIXELS = 256 * 256
+# Every image is resized to exactly this many pixels, so at 32x32 px per merged
+# visual token this is the token budget the backbone sees: 256*256 is 64 tokens,
+# against roughly 1,400 for the processor's own default on a CVQA photograph.
+#
+# The budget is not neutral on CVQA. Scoring one checkpoint on identical items at
+# 588 merged tokens instead of 64 is worth +3.35 accuracy points averaged over
+# bn/ga/jv/mn/si (35.26 -> 38.61), and it changes the sign of the comparison
+# against the zero-shot backbone: below its backbone at 64 tokens, above it at
+# 588. On xGQA the same sweep is flat (+0.11, p = 0.17), so this is
+# benchmark-dependent rather than a general "use more pixels" -- the curve is
+# steep below roughly 187 merged tokens and flat above.
+#
+# Overridable so the budget can be swept without editing the source; the default
+# is unchanged, so every number produced before this reproduces exactly.
+VISUAL_PIXELS = int(os.environ.get("VISUAL_PIXELS", 256 * 256))
 
 BACKBONES = {
     "qwen-2b": ("qwen3vl", "Qwen/Qwen3-VL-2B-Instruct"),
